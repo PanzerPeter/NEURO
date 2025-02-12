@@ -4,14 +4,154 @@ import numpy as np
 from torch.utils.data import Dataset, DataLoader, TensorDataset
 import json
 from torch.nn.utils.rnn import pad_sequence
+from typing import Dict, List, Any, Tuple, Optional
+from .errors import ValidationError, get_context
 
-class NeuroMatrix:
-    def __init__(self, data=None):
-        self.data = []
-        self.meta = {}
+class NeuroMatrix(Dataset):
+    """
+    Custom dataset class for NEURO data format.
+    Supports both training data and model weights.
+    """
+    
+    def __init__(self, data: List[Dict[str, Any]], meta: Optional[Dict[str, Any]] = None):
+        self.data = data
+        self.meta = meta or {}
         self.model_config = {}
-        if data is not None:
-            self.data = data
+        self._validate_data()
+        self._prepare_tensors()
+    
+    @classmethod
+    def from_dict(cls, data_dict: Dict[str, Any]) -> 'NeuroMatrix':
+        """
+        Creates a NeuroMatrix from a dictionary representation.
+        
+        Args:
+            data_dict: Dictionary containing data and metadata
+            
+        Returns:
+            A new NeuroMatrix instance
+        """
+        if not isinstance(data_dict, dict):
+            raise ValidationError(
+                "Invalid data format",
+                context=get_context(),
+                suggestions=["Data should be a dictionary with 'meta' and 'data' keys"],
+                details={"provided_type": type(data_dict).__name__}
+            )
+            
+        meta = data_dict.get('meta', {})
+        data = data_dict.get('data', [])
+        
+        if not isinstance(data, list):
+            raise ValidationError(
+                "Invalid data format",
+                context=get_context(),
+                suggestions=["Data should be a list of input-output pairs"],
+                details={"provided_type": type(data).__name__}
+            )
+            
+        return cls(data, meta)
+    
+    @classmethod
+    def from_tensors(cls, inputs: torch.Tensor, targets: torch.Tensor) -> 'NeuroMatrix':
+        """
+        Creates a NeuroMatrix from PyTorch tensors.
+        
+        Args:
+            inputs: Input tensor
+            targets: Target tensor
+            
+        Returns:
+            A new NeuroMatrix instance
+        """
+        if not isinstance(inputs, torch.Tensor) or not isinstance(targets, torch.Tensor):
+            raise ValidationError(
+                "Invalid tensor types",
+                context=get_context(),
+                suggestions=["Both inputs and targets must be PyTorch tensors"],
+                details={
+                    "inputs_type": type(inputs).__name__,
+                    "targets_type": type(targets).__name__
+                }
+            )
+            
+        if len(inputs) != len(targets):
+            raise ValidationError(
+                "Mismatched tensor lengths",
+                context=get_context(),
+                suggestions=["Input and target tensors must have the same length"],
+                details={
+                    "inputs_length": len(inputs),
+                    "targets_length": len(targets)
+                }
+            )
+            
+        # Convert tensors to list of dictionaries
+        data = []
+        for x, y in zip(inputs, targets):
+            data.append({
+                'input': x.tolist(),
+                'output': y.tolist() if y.dim() > 0 else [y.item()]
+            })
+            
+        meta = {
+            'created': 'from_tensors',
+            'input_shape': list(inputs.shape[1:]),
+            'output_shape': list(targets.shape[1:]) if targets.dim() > 1 else [1]
+        }
+        
+        return cls(data, meta)
+    
+    def _validate_data(self):
+        """Validates the data format."""
+        if not isinstance(self.data, list):
+            raise ValidationError(
+                "Invalid data format",
+                context=get_context(),
+                suggestions=["Data must be a list of dictionaries"],
+                details={"provided_type": type(self.data).__name__}
+            )
+            
+        for i, item in enumerate(self.data):
+            if not isinstance(item, dict):
+                raise ValidationError(
+                    f"Invalid data item at index {i}",
+                    context=get_context(),
+                    suggestions=["Each item must be a dictionary with 'input' and 'output' keys"],
+                    details={"item_type": type(item).__name__}
+                )
+                
+            if 'input' not in item or 'output' not in item:
+                raise ValidationError(
+                    f"Missing required keys in data item at index {i}",
+                    context=get_context(),
+                    suggestions=["Each item must have 'input' and 'output' keys"],
+                    details={"available_keys": list(item.keys())}
+                )
+    
+    def _prepare_tensors(self):
+        """Converts data to PyTorch tensors."""
+        self.inputs = []
+        self.targets = []
+        
+        for item in self.data:
+            x = torch.tensor(item['input'], dtype=torch.float32)
+            y = torch.tensor(item['output'], dtype=torch.float32)
+            self.inputs.append(x)
+            self.targets.append(y)
+            
+        self.inputs = torch.stack(self.inputs)
+        self.targets = torch.stack(self.targets)
+    
+    def __len__(self) -> int:
+        return len(self.data)
+    
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        return self.inputs[idx], self.targets[idx]
+    
+    def to_torch_dataset(self) -> 'NeuroMatrix':
+        """Returns self as it's already a PyTorch Dataset."""
+        return self
 
     def add_meta(self, name, created, description):
         self.meta = {
@@ -28,33 +168,6 @@ class NeuroMatrix:
             'input': input_data,
             'output': output_data
         })
-
-    def to_torch_dataset(self):
-        """Convert the matrix data to a PyTorch dataset."""
-        if not self.data:
-            raise ValueError("Empty matrix cannot be converted to dataset")
-
-        # Add dtype auto-detection
-        sample_input = self.data[0]['input']
-        dtype = torch.float if isinstance(sample_input[0], float) else torch.long
-        
-        # Convert inputs and targets to tensors
-        inputs = [torch.tensor(d['input'], dtype=dtype) for d in self.data]
-        targets = [torch.tensor(d['output'], dtype=dtype).squeeze() for d in self.data]  # Squeeze to remove extra dimensions
-        
-        # Stack tensors into batches
-        inputs = torch.stack(inputs)
-        targets = torch.stack(targets)
-        
-        # Create dataset
-        dataset = TensorDataset(inputs, targets)
-        return DataLoader(dataset, batch_size=32, shuffle=True)
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        return self.data[idx]
 
     @staticmethod
     def load(file_path):

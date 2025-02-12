@@ -35,6 +35,7 @@ ENV/
 .project
 .pydevproject
 .settings/
+tests/
 
 # NEURO specific
 src/parser.out

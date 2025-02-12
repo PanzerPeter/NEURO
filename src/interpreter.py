@@ -1,8 +1,21 @@
+"""
+NEURO Interpreter Module
+Executes NEURO code with enhanced error handling and memory management.
+"""
+
 import torch
-import numpy as np
+import torch.nn as nn
 import random
+from typing import Any, Dict, Optional
 from .parser import NeuroParser
 from .matrix import NeuroMatrix
+from .errors import (
+    NeuroError, 
+    ValidationError, 
+    ConfigurationError,
+    get_context
+)
+from .memory import MemoryManager
 
 class ResidualBlock(torch.nn.Module):
     def __init__(self, module):
@@ -28,7 +41,7 @@ class LabelSmoothing(torch.nn.Module):
                 true_dist.fill_(self.smoothing / (num_classes - 1))
             else:
                 true_dist.fill_(self.smoothing)
-            target = target.long()  # Convert target to long dtype
+            target = target.long()
             true_dist.scatter_(1, target.unsqueeze(1), self.confidence)
             mask = target == self.ignore_index
             true_dist[mask.unsqueeze(1).expand_as(true_dist)] = 0
@@ -46,7 +59,6 @@ class SelfAttention(torch.nn.Module):
         )
     
     def forward(self, x):
-        # Use the input as query, key, and value
         return self.attention(x, x, x)[0]
 
 class SequenceModel(torch.nn.Module):
@@ -244,362 +256,477 @@ class NeuroSequential(torch.nn.Sequential):
         return accuracy
 
 class NeuroInterpreter:
-    def __init__(self):
+    def __init__(self, device: Optional[str] = None):
         self.parser = NeuroParser()
-        self.variables = {}  # Symbol table for variables
-        self.models = {}    # Storage for neural network models
-        self.loss_function = None
-        self.optimizer_config = None
-
-    def interpret(self, code):
+        self.variables: Dict[str, Any] = {}
+        self.device = torch.device(device if device else 
+                                 "cuda" if torch.cuda.is_available() else "cpu")
+        self.memory_manager: Optional[MemoryManager] = None
+        self.current_model = None
+        self.last_layer_size = None
+    
+    def interpret(self, source_code: str) -> Any:
+        """
+        Interprets NEURO source code with enhanced error handling.
+        
+        Args:
+            source_code: The NEURO source code to interpret
+            
+        Returns:
+            The result of the last executed statement
+        """
         try:
-            ast = self.parser.parse(code)
-            if ast is None:
-                raise ValueError("Failed to parse the code. Please check the syntax.")
-            return self.execute(ast)
+            ast = self.parser.parse(source_code)
+            return self.execute_ast(ast)
         except Exception as e:
-            print(f"\nError executing code: {str(e)}")
-            print("Traceback:")
-            import traceback
-            traceback.print_exc()
-            return None
-
-    def execute(self, node):
-        if isinstance(node, tuple):
-            node_type = node[0]
+            if isinstance(e, NeuroError):
+                raise
+            raise NeuroError(
+                f"Error interpreting code: {str(e)}",
+                context=get_context(),
+                suggestions=[
+                    "Check syntax for errors",
+                    "Verify all variables are defined",
+                    "Ensure model configuration is valid"
+                ]
+            ) from e
+    
+    def execute_ast(self, ast: tuple) -> Any:
+        """
+        Executes an Abstract Syntax Tree node.
+        
+        Args:
+            ast: The AST node to execute
+            
+        Returns:
+            The result of executing the AST node
+        """
+        try:
+            node_type = ast[0]
             
             if node_type == 'program':
-                return self.execute_program(node[1])
+                return self.execute_program(ast[1])
             elif node_type == 'neural_network':
-                return self.execute_neural_network(node[1], node[2], node[3], node[4])
+                return self.create_neural_network(ast[1], ast[2], ast[3], ast[4])
             elif node_type == 'method_call':
-                return self.execute_method_call(node[1], node[2], node[3])
+                return self.execute_method_call(ast[1], ast[2], ast[3])
             elif node_type == 'assignment':
-                return self.execute_assignment(node[1], node[2])
+                return self.execute_assignment(ast[1], ast[2])
             elif node_type == 'binop':
-                return self.execute_binop(node[1], node[2], node[3])
+                return self.execute_binop(ast[1], ast[2], ast[3])
             elif node_type == 'number':
-                return float(node[1])
+                return float(ast[1])
             elif node_type == 'string':
-                return str(node[1])
+                return str(ast[1])
             elif node_type == 'id':
-                return self.variables.get(node[1])
+                return self.variables.get(ast[1])
             elif node_type == 'print':
-                return self.execute_print(node[1])
+                return self.execute_print(ast[1])
             elif node_type == 'print_formatted':
-                return self.execute_print_formatted(node[1], node[2])
+                return self.execute_print_formatted(ast[1], ast[2])
             elif node_type == 'load_matrix':
-                return self.execute_load_matrix(node[1])
+                return self.execute_load_matrix(ast[1])
             elif node_type == 'save_model':
-                return self.execute_save_model(node[1], node[2])
+                return self.execute_save_model(ast[1], ast[2])
             elif node_type == 'load_model':
-                return self.execute_load_model(node[1])
+                return self.execute_load_model(ast[1])
             elif node_type == 'layer':
-                return self.execute_layer(node[1], node[2], node[3], node[4])
+                return self.execute_layer(ast[1], ast[2], ast[3], ast[4])
             elif node_type == 'config':
-                return self.execute_config(node[1], node[2])
+                return self.execute_config(ast[1], ast[2])
             else:
                 raise ValueError(f"Unknown node type: {node_type}")
         
-        elif isinstance(node, list):
-            result = None
-            for statement in node:
-                result = self.execute(statement)
-            return result
+        except Exception as e:
+            if isinstance(e, NeuroError):
+                raise
+            raise NeuroError(
+                f"Error executing AST node: {str(e)}",
+                context=get_context(),
+                suggestions=[
+                    "Check model architecture",
+                    "Verify layer configurations",
+                    "Ensure data types are compatible"
+                ],
+                details={"ast_node": str(ast)}
+            ) from e
+    
+    def create_neural_network(self, name: str, params: list, layers: list, config: Optional[list] = None) -> nn.Module:
+        """
+        Creates a neural network with validation.
         
-        elif isinstance(node, (int, float)):
-            return float(node)
+        Args:
+            name: Network name
+            params: Network parameters
+            layers: Layer configurations
+            config: Optional network configuration
+            
+        Returns:
+            The constructed model
+        """
+        try:
+            # Extract and validate input size
+            input_size = int(self._get_param(params, 'input_size'))
+            output_size = int(self._get_param(params, 'output_size'))
+            
+            if input_size <= 0 or output_size <= 0:
+                raise ValidationError(
+                    "Invalid model dimensions",
+                    context=get_context(),
+                    suggestions=["Input and output sizes must be positive"],
+                    details={
+                        "input_size": input_size,
+                        "output_size": output_size
+                    }
+                )
+            
+            # Check for unreasonable dimensions
+            if input_size > 1e5 or output_size > 1e5:
+                raise NeuroError(
+                    "Model dimensions too large",
+                    context=get_context(),
+                    suggestions=[
+                        "Reduce input/output dimensions",
+                        "Consider using a more efficient architecture",
+                        "Split the model into smaller components"
+                    ],
+                    details={
+                        "input_size": input_size,
+                        "output_size": output_size,
+                        "max_allowed": 1e5
+                    }
+                )
+            
+            # Initialize layer tracking
+            self.last_layer_size = input_size
+            
+            # Build the model
+            model = self._build_model(params, layers)
+            
+            # Set up memory management
+            memory_manager = MemoryManager(
+                model,
+                self.device,
+                max_memory_usage=0.9
+            )
+            
+            # Attach memory manager to model
+            model.memory_manager = memory_manager
+            self.memory_manager = memory_manager
+            
+            # Store in variables
+            self.variables[name] = model
+            self.current_model = model
+            
+            # Initialize loss function if not set
+            if not hasattr(self, 'loss_function'):
+                self.loss_function = nn.BCEWithLogitsLoss()
+            
+            return model
+            
+        except RuntimeError as e:
+            if "memory" in str(e).lower():
+                raise MemoryError("Not enough memory to create model")
+            raise
+    
+    def _build_model(self, params: list, layers: Optional[list]) -> nn.Module:
+        """
+        Builds a neural network model with validation.
         
-        elif isinstance(node, str):
-            return str(node)
+        Args:
+            params: Network parameters
+            layers: Layer configurations
+            
+        Returns:
+            The constructed model
+        """
+        try:
+            # Extract parameters
+            input_size = self._get_param(params, 'input_size')
+            output_size = self._get_param(params, 'output_size')
+            
+            # Validate parameters
+            if input_size <= 0 or output_size <= 0:
+                raise ValidationError(
+                    "Invalid model dimensions",
+                    context=get_context(),
+                    suggestions=["Input and output sizes must be positive"],
+                    details={"input_size": input_size, "output_size": output_size}
+                )
+            
+            # Create model with custom Sequential class
+            model = NeuroSequential()
+            model.max_grad_norm = None  # Initialize gradient clipping
+            model.scheduler = None      # Initialize scheduler
+            
+            # Add layers if specified
+            if layers:
+                for layer in layers:
+                    layer_type = layer[1]
+                    layer_params = layer[2]
+                    model.append(self._create_layer(layer_type, layer_params))
+            
+            return model
+            
+        except Exception as e:
+            if isinstance(e, NeuroError):
+                raise
+            raise ConfigurationError(
+                "Error building model",
+                context=get_context(),
+                suggestions=[
+                    "Check layer parameters",
+                    "Verify layer compatibility",
+                    "Ensure sufficient memory"
+                ],
+                details={"error_location": "model_building"}
+            ) from e
+    
+    def _create_layer(self, layer_type: str, params: list) -> nn.Module:
+        """
+        Creates a single neural network layer with validation.
         
-        else:
-            raise ValueError(f"Cannot execute node of type {type(node)}")
+        Args:
+            layer_type: Type of layer to create
+            params: Layer parameters
+            
+        Returns:
+            The created layer
+        """
+        try:
+            if layer_type == 'Dense':
+                units = int(self._get_param(params, 'units'))
+                activation = self._get_param(params, 'activation', 'relu')
+                
+                # Validate units
+                if units <= 0:
+                    raise ValidationError(
+                        "Number of units must be positive",
+                        context=get_context(),
+                        suggestions=["Use a positive integer for units"],
+                        details={"units": units}
+                    )
+                
+                layer = nn.Sequential(
+                    nn.Linear(self._get_last_size(), units),
+                    self._get_activation(activation)
+                )
+                self._update_last_size(units)
+                return layer
+            
+            elif layer_type == 'LSTM':
+                hidden_size = int(self._get_param(params, 'hidden_size'))
+                num_layers = int(self._get_param(params, 'num_layers', 1))
+                bidirectional = bool(self._get_param(params, 'bidirectional', False))
+                
+                layer = nn.LSTM(
+                    input_size=self._get_last_size(),
+                    hidden_size=hidden_size,
+                    num_layers=num_layers,
+                    bidirectional=bidirectional,
+                    batch_first=True
+                )
+                self._update_last_size(hidden_size * (2 if bidirectional else 1))
+                return layer
+            
+            elif layer_type == 'GRU':
+                hidden_size = int(self._get_param(params, 'hidden_size'))
+                num_layers = int(self._get_param(params, 'num_layers', 1))
+                bidirectional = bool(self._get_param(params, 'bidirectional', False))
+                
+                layer = nn.GRU(
+                    input_size=self._get_last_size(),
+                    hidden_size=hidden_size,
+                    num_layers=num_layers,
+                    bidirectional=bidirectional,
+                    batch_first=True
+                )
+                self._update_last_size(hidden_size * (2 if bidirectional else 1))
+                return layer
+            
+            elif layer_type == 'Attention':
+                num_heads = int(self._get_param(params, 'num_heads', 8))
+                dropout = float(self._get_param(params, 'dropout', 0.1))
+                
+                layer = SelfAttention(
+                    embed_dim=self._get_last_size(),
+                    num_heads=num_heads,
+                    dropout=dropout
+                )
+                return layer  # Size remains unchanged
+            
+            elif layer_type == 'Embedding':
+                vocab_size = int(self._get_param(params, 'vocab_size'))
+                embedding_dim = int(self._get_param(params, 'embedding_dim'))
+                
+                if vocab_size is None or embedding_dim is None:
+                    raise ValidationError(
+                        "Embedding layer requires vocab_size and embedding_dim parameters",
+                        context=get_context(),
+                        suggestions=["Add vocab_size and embedding_dim to layer parameters"]
+                    )
+                
+                layer = nn.Embedding(vocab_size, embedding_dim)
+                self._update_last_size(embedding_dim)
+                return layer
+            
+            elif layer_type == 'Conv2D':
+                in_channels = int(self._get_param(params, 'in_channels'))
+                out_channels = int(self._get_param(params, 'out_channels'))
+                kernel_size = int(self._get_param(params, 'kernel_size', 3))
+                
+                if in_channels is None or out_channels is None:
+                    raise ValidationError(
+                        "Conv2D layer requires in_channels and out_channels parameters",
+                        context=get_context(),
+                        suggestions=["Add in_channels and out_channels to layer parameters"]
+                    )
+                
+                layer = nn.Conv2d(in_channels, out_channels, kernel_size)
+                self._update_last_size(out_channels)
+                return layer
+            
+            elif layer_type == 'MaxPool':
+                kernel_size = int(self._get_param(params, 'kernel_size', 2))
+                layer = nn.MaxPool2d(kernel_size)
+                return layer  # Size changes but depends on input shape
+            
+            elif layer_type == 'Dropout':
+                rate = float(self._get_param(params, 'rate', 0.5))
+                return nn.Dropout(rate)  # Size remains unchanged
+            
+            elif layer_type == 'Flatten':
+                return nn.Flatten()  # Size changes but depends on input shape
+            
+            elif layer_type == 'normalize':
+                num_features = int(self._get_param(params, 'features', self._get_last_size()))
+                return nn.LayerNorm(num_features)  # Size remains unchanged
+            
+            else:
+                raise ValidationError(
+                    f"Unknown layer type: {layer_type}",
+                    context=get_context(),
+                    suggestions=["Check layer type"]
+                )
+            
+        except Exception as e:
+            if isinstance(e, NeuroError):
+                raise
+            raise ConfigurationError(
+                f"Failed to create {layer_type} layer",
+                context=get_context(),
+                suggestions=[
+                    "Check layer parameters",
+                    "Verify activation function",
+                    "Ensure dimensions match"
+                ],
+                details={
+                    "layer_type": layer_type,
+                    "parameters": str(params)
+                }
+            ) from e
+    
+    def _get_param(self, params: list, name: str, default: Any = None) -> Any:
+        """
+        Safely extracts a parameter value.
+        
+        Args:
+            params: List of parameters
+            name: Parameter name to find
+            default: Default value if not found
+            
+        Returns:
+            The parameter value
+        """
+        for param in params:
+            if param[0] == 'named_param' and param[1] == name:
+                return self._evaluate_expression(param[2])
+        if default is not None:
+            return default
+        raise ValidationError(
+            f"Required parameter '{name}' not found",
+            context=get_context(),
+            suggestions=[f"Add {name}=value to parameters"],
+            details={"available_params": str(params)}
+        )
+    
+    def _get_activation(self, name: str) -> nn.Module:
+        """
+        Gets an activation function by name.
+        
+        Args:
+            name: Name of the activation function
+            
+        Returns:
+            The activation module
+        """
+        activations = {
+            'relu': nn.ReLU(),
+            'sigmoid': nn.Sigmoid(),
+            'tanh': nn.Tanh(),
+            'leaky_relu': nn.LeakyReLU(),
+            'elu': nn.ELU(),
+            'softmax': nn.Softmax(dim=-1),
+            'log_softmax': nn.LogSoftmax(dim=-1)
+        }
+        
+        if name not in activations:
+            raise ValidationError(
+                f"Unknown activation function: {name}",
+                context=get_context(),
+                suggestions=[
+                    f"Available activations: {', '.join(activations.keys())}"
+                ]
+            )
+        
+        return activations[name]
+    
+    def _get_last_size(self) -> int:
+        """
+        Get the size of the last layer or input size.
+        
+        Returns:
+            The size of the last layer
+        """
+        if self.last_layer_size is None:
+            raise ValidationError(
+                "Layer size not initialized",
+                context=get_context(),
+                suggestions=["Ensure input_size is specified in NeuralNetwork"],
+                details={"current_size": None}
+            )
+        return self.last_layer_size
+
+    def _update_last_size(self, size: int):
+        """
+        Update the size of the last layer.
+        
+        Args:
+            size: New layer size
+        """
+        self.last_layer_size = size
 
     def execute_program(self, statements):
         result = None
         for statement in statements:
-            result = self.execute(statement)
+            result = self.execute_ast(statement)
         return result
 
-    def execute_neural_network(self, var_name, params, layers=None, config=None):
-        # Get network parameters
-        input_size = None
-        output_size = None
-        sequence_length = None
-        
-        for param in params:
-            if param[0] == 'named_param':
-                if param[1] == 'input_size':
-                    input_size = int(self.execute(param[2]))
-                elif param[1] == 'output_size':
-                    output_size = int(self.execute(param[2]))
-                elif param[1] == 'sequence_length':
-                    sequence_length = int(self.execute(param[2]))
-        
-        if input_size is None or output_size is None:
-            raise ValueError("Neural network requires input_size and output_size")
-
-        # Create model layers
-        if layers is None:
-            # Default architecture if no layers specified
-            model = NeuroSequential(
-                torch.nn.Linear(input_size, 64),
-                torch.nn.ReLU(),
-                torch.nn.Linear(64, output_size),
-                output_size=output_size
-            )
-        else:
-            # Check if this is a sequence model (has LSTM, GRU, Attention, or Embedding layers)
-            is_sequence_model = any(layer[1] in ['LSTM', 'GRU', 'ATTENTION', 'EMBEDDING'] 
-                                  for layer in layers)
-            
-            # Build layer list
-            layer_list = []
-            current_size = input_size
-            has_embedding = any(layer[1] == 'EMBEDDING' for layer in layers)
-            
-            for layer in layers:
-                layer_module = self.execute_layer(layer[1], layer[2], current_size, sequence_length)
-                if isinstance(layer_module, tuple):
-                    layer_list.extend(layer_module)
-                    current_size = layer_module[0].out_features
-                else:
-                    layer_list.append(layer_module)
-                    if hasattr(layer_module, 'out_features'):
-                        current_size = layer_module.out_features
-                    elif hasattr(layer_module, 'hidden_size'):
-                        current_size = layer_module.hidden_size * (2 if getattr(layer_module, 'bidirectional', False) else 1)
-                    elif isinstance(layer_module, torch.nn.Embedding):
-                        current_size = layer_module.embedding_dim
-            
-            # Add final output layer if needed
-            if current_size != output_size:
-                layer_list.append(torch.nn.Linear(current_size, output_size))
-            
-            # Create the appropriate model type
-            if is_sequence_model:
-                model = SequenceModel(layer_list, input_size, output_size, sequence_length or 1)
-                model.has_embedding = has_embedding
-            else:
-                model = NeuroSequential(*layer_list, output_size=output_size)
-        
-        # Store the model in the variables dictionary
-        self.variables[var_name] = model
-        return model
-
-    def execute_layer(self, layer_type, params, input_size, sequence_length=None):
-        if layer_type == 'Dense':
-            units = None
-            activation = 'relu'
-            
-            for param in params:
-                if param[0] == 'named_param':
-                    if param[1] == 'units':
-                        units = int(self.execute(param[2]))
-                    elif param[1] == 'activation':
-                        activation = str(self.execute(param[2]))
-            
-            if units is None:
-                raise ValueError("Dense layer requires units parameter")
-            
-            if activation == 'relu':
-                return (torch.nn.Linear(input_size, units), torch.nn.ReLU())
-            elif activation == 'sigmoid':
-                return (torch.nn.Linear(input_size, units), torch.nn.Sigmoid())
-            elif activation == 'tanh':
-                return (torch.nn.Linear(input_size, units), torch.nn.Tanh())
-            elif activation == 'leaky_relu':
-                return (torch.nn.Linear(input_size, units), torch.nn.LeakyReLU())
-            elif activation == 'elu':
-                return (torch.nn.Linear(input_size, units), torch.nn.ELU())
-            else:
-                return torch.nn.Linear(input_size, units)
-                
-        elif layer_type == 'LSTM':
-            hidden_size = None
-            num_layers = 1
-            bidirectional = False
-            
-            for param in params:
-                if param[0] == 'named_param':
-                    if param[1] == 'hidden_size':
-                        hidden_size = int(self.execute(param[2]))
-                    elif param[1] == 'num_layers':
-                        num_layers = int(self.execute(param[2]))
-                    elif param[1] == 'bidirectional':
-                        bidirectional = bool(self.execute(param[2]))
-            
-            if hidden_size is None:
-                raise ValueError("LSTM layer requires hidden_size parameter")
-                
-            return torch.nn.LSTM(
-                input_size=input_size,
-                hidden_size=hidden_size,
-                num_layers=num_layers,
-                bidirectional=bidirectional,
-                batch_first=True
-            )
-            
-        elif layer_type == 'GRU':
-            hidden_size = None
-            num_layers = 1
-            bidirectional = False
-            
-            for param in params:
-                if param[0] == 'named_param':
-                    if param[1] == 'hidden_size':
-                        hidden_size = int(self.execute(param[2]))
-                    elif param[1] == 'num_layers':
-                        num_layers = int(self.execute(param[2]))
-                    elif param[1] == 'bidirectional':
-                        bidirectional = bool(self.execute(param[2]))
-            
-            if hidden_size is None:
-                raise ValueError("GRU layer requires hidden_size parameter")
-                
-            return torch.nn.GRU(
-                input_size=input_size,
-                hidden_size=hidden_size,
-                num_layers=num_layers,
-                bidirectional=bidirectional,
-                batch_first=True
-            )
-            
-        elif layer_type == 'Attention':
-            num_heads = 8
-            dropout = 0.1
-            
-            for param in params:
-                if param[0] == 'named_param':
-                    if param[1] == 'num_heads':
-                        num_heads = int(self.execute(param[2]))
-                    elif param[1] == 'dropout':
-                        dropout = float(self.execute(param[2]))
-            
-            return SelfAttention(
-                embed_dim=input_size,
-                num_heads=num_heads,
-                dropout=dropout
-            )
-            
-        elif layer_type == 'Embedding':
-            vocab_size = None
-            embedding_dim = None
-            
-            for param in params:
-                if param[0] == 'named_param':
-                    if param[1] == 'vocab_size':
-                        vocab_size = int(self.execute(param[2]))
-                    elif param[1] == 'embedding_dim':
-                        embedding_dim = int(self.execute(param[2]))
-            
-            if vocab_size is None or embedding_dim is None:
-                raise ValueError("Embedding layer requires vocab_size and embedding_dim parameters")
-                
-            return torch.nn.Embedding(vocab_size, embedding_dim)
-            
-        elif layer_type == 'Conv2D':
-            in_channels = None
-            out_channels = None
-            kernel_size = 3
-            
-            for param in params:
-                if param[0] == 'named_param':
-                    if param[1] == 'in_channels':
-                        in_channels = int(self.execute(param[2]))
-                    elif param[1] == 'out_channels':
-                        out_channels = int(self.execute(param[2]))
-                    elif param[1] == 'kernel_size':
-                        kernel_size = int(self.execute(param[2]))
-            
-            if in_channels is None or out_channels is None:
-                raise ValueError("Conv2D layer requires in_channels and out_channels")
-            
-            return torch.nn.Conv2d(in_channels, out_channels, kernel_size)
-            
-        elif layer_type == 'MaxPool':
-            kernel_size = 2
-            for param in params:
-                if param[0] == 'named_param' and param[1] == 'kernel_size':
-                    kernel_size = int(self.execute(param[2]))
-            return torch.nn.MaxPool2d(kernel_size)
-            
-        elif layer_type == 'Dropout':
-            rate = 0.5
-            for param in params:
-                if param[0] == 'named_param' and param[1] == 'rate':
-                    rate = float(self.execute(param[2]))
-            return torch.nn.Dropout(rate)
-            
-        elif layer_type == 'Flatten':
-            return torch.nn.Flatten()
-            
-        elif layer_type == 'normalize':
-            # Get the number of features from the previous layer
-            num_features = None
-            for param in params:
-                if param[0] == 'named_param' and param[1] == 'features':
-                    num_features = int(self.execute(param[2]))
-            if num_features is None:
-                num_features = input_size  # Use input size as number of features
-            # Use LayerNorm instead of BatchNorm for better handling of small batches
-            return torch.nn.LayerNorm(num_features)
-            
-        else:
-            raise ValueError(f"Unknown layer type: {layer_type}")
-
-    def get_loss_function(self, params):
-        loss_type = None
-        for param in params:
-            if param[0] == 'named_param' and param[1] == 'type':
-                loss_type = str(self.execute(param[2]))
-        
-        if loss_type == 'mse':
-            return torch.nn.MSELoss()
-        elif loss_type == 'cross_entropy':
-            return torch.nn.CrossEntropyLoss(ignore_index=0)
-        elif loss_type == 'bce':
-            return torch.nn.BCEWithLogitsLoss()  # Using BCEWithLogitsLoss for better numerical stability
-        else:
-            return torch.nn.CrossEntropyLoss(ignore_index=0)
-
-    def get_optimizer(self, model, params):
-        optimizer_type = None
-        learning_rate = 0.01
-        
-        for param in params:
-            if param[0] == 'named_param':
-                if param[1] == 'type':
-                    optimizer_type = str(self.execute(param[2]))
-                elif param[1] == 'learning_rate':
-                    learning_rate = float(self.execute(param[2]))
-        
-        if optimizer_type == 'adam':
-            return torch.optim.Adam(model.parameters(), lr=learning_rate)
-        elif optimizer_type == 'sgd':
-            return torch.optim.SGD(model.parameters(), lr=learning_rate)
-        elif optimizer_type == 'rmsprop':
-            return torch.optim.RMSprop(model.parameters(), lr=learning_rate)
-        else:
-            return torch.optim.Adam(model.parameters(), lr=learning_rate)  # Default optimizer
-
     def execute_method_call(self, obj_expr, method_name, params):
-        obj = self.execute(obj_expr)
+        """Execute a method call on an object."""
+        obj = self.execute_ast(obj_expr)
         if obj is None:
             raise ValueError(f"Object not found")
         
         # Convert params list to dictionary
-        param_dict = {}
+        param_dict = {'positional': []}  # Initialize with positional list
         for param in params:
             if param[0] == 'param':
                 # Handle positional parameters
-                if not hasattr(param_dict, 'positional'):
-                    param_dict['positional'] = []
-                param_dict['positional'].append(self.execute(param[1]))
+                param_dict['positional'].append(self.execute_ast(param[1]))
             elif param[0] == 'named_param':
                 # Handle named parameters
-                param_dict[param[1]] = self.execute(param[2])
+                param_dict[param[1]] = self.execute_ast(param[2])
         
         if method_name == 'train':
             # Get training parameters with defaults
@@ -608,16 +735,21 @@ class NeuroInterpreter:
             teacher_forcing_ratio = float(param_dict.get('teacher_forcing_ratio', 0.5))
             scheduler = param_dict.get('scheduler', None)
             warmup_steps = int(param_dict.get('warmup_steps', 10))
-            data = param_dict['positional'][0] if 'positional' in param_dict else None
+            data = param_dict['positional'][0] if param_dict['positional'] else None
             
             if not isinstance(data, NeuroMatrix):
-                raise ValueError("Training data must be a NeuroMatrix object")
+                raise ValidationError(
+                    "Training data must be a NeuroMatrix object",
+                    context=get_context(),
+                    suggestions=["Convert your data to NeuroMatrix format"],
+                    details={"data_type": type(data).__name__}
+                )
             
             # Convert data to PyTorch dataset
             dataset = data.to_torch_dataset()
             
             # Initialize optimizer and scheduler
-            optimizer = torch.optim.Adam(obj.parameters(), lr=learning_rate, weight_decay=0.01)
+            optimizer = torch.optim.Adam(obj.parameters(), lr=learning_rate)
             if scheduler == 'cosine':
                 obj.set_scheduler('cosine', optimizer, warmup_steps)
             elif scheduler == 'step':
@@ -641,6 +773,7 @@ class NeuroInterpreter:
                         outputs = obj(inputs)
                         if outputs.size(-1) == 1:  # Binary classification
                             outputs = outputs.squeeze(-1)
+                            targets = targets.squeeze(-1)  # Match target shape
                     
                     # Calculate loss
                     loss = criterion(outputs, targets.float())  # Convert targets to float for BCE
@@ -681,13 +814,13 @@ class NeuroInterpreter:
             raise ValueError(f"Unknown method: {method_name}")
 
     def execute_assignment(self, var_name, value):
-        result = self.execute(value)
+        result = self.execute_ast(value)
         self.variables[var_name] = result
         return result
 
     def execute_binop(self, op, left, right):
-        left_val = self.execute(left)
-        right_val = self.execute(right)
+        left_val = self.execute_ast(left)
+        right_val = self.execute_ast(right)
         
         if op == 'PLUS':
             return left_val + right_val
@@ -701,12 +834,12 @@ class NeuroInterpreter:
             raise ValueError(f"Unknown operator: {op}")
 
     def execute_print(self, expr):
-        value = self.execute(expr)
+        value = self.execute_ast(expr)
         print(value)
         return value
 
     def execute_print_formatted(self, format_str, expr):
-        value = self.execute(expr)
+        value = self.execute_ast(expr)
         print(format_str, value)
         return value
 
@@ -735,6 +868,179 @@ class NeuroInterpreter:
         elif config_type == 'optimizer':
             self.optimizer_config = params
         return None
+
+    def _evaluate_expression(self, expr: tuple) -> Any:
+        """
+        Evaluates an expression tuple.
+        
+        Args:
+            expr: Expression tuple to evaluate
+            
+        Returns:
+            The evaluated expression result
+        """
+        try:
+            expr_type = expr[0]
+            
+            if expr_type == 'number':
+                return float(expr[1])
+            elif expr_type == 'string':
+                return str(expr[1])
+            elif expr_type == 'id':
+                # Handle boolean literals
+                if expr[1].lower() == 'true':
+                    return True
+                elif expr[1].lower() == 'false':
+                    return False
+                
+                if expr[1] not in self.variables:
+                    raise ValidationError(
+                        f"Undefined variable: {expr[1]}",
+                        context=get_context(),
+                        suggestions=["Check variable name", "Ensure variable is defined before use"],
+                        details={"variable_name": expr[1]}
+                    )
+                return self.variables[expr[1]]
+            elif expr_type == 'binop':
+                left = self._evaluate_expression(expr[2])
+                right = self._evaluate_expression(expr[3])
+                
+                if expr[1] == '+':
+                    return left + right
+                elif expr[1] == '-':
+                    return left - right
+                elif expr[1] == '*':
+                    return left * right
+                elif expr[1] == '/':
+                    if right == 0:
+                        raise ValidationError(
+                            "Division by zero",
+                            context=get_context(),
+                            suggestions=["Check denominator value"],
+                            details={"operator": "/"}
+                        )
+                    return left / right
+                elif expr[1] == '==':
+                    return left == right
+                elif expr[1] == '!=':
+                    return left != right
+                elif expr[1] == '<':
+                    return left < right
+                elif expr[1] == '>':
+                    return left > right
+                elif expr[1] == '<=':
+                    return left <= right
+                elif expr[1] == '>=':
+                    return left >= right
+                elif expr[1] == 'and':
+                    return left and right
+                elif expr[1] == 'or':
+                    return left or right
+            else:
+                raise ValidationError(
+                    f"Unknown expression type: {expr_type}",
+                    context=get_context(),
+                    suggestions=["Check expression syntax"],
+                    details={"expression_type": expr_type}
+                )
+            
+        except Exception as e:
+            if isinstance(e, NeuroError):
+                raise
+            raise ValidationError(
+                f"Error evaluating expression: {str(e)}",
+                context=get_context(),
+                suggestions=["Check expression syntax", "Verify data types"],
+                details={"expression": str(expr)}
+            ) from e
+
+    def get_loss_function(self, params: list) -> nn.Module:
+        """
+        Get a loss function by name.
+        
+        Args:
+            params: Loss function parameters
+            
+        Returns:
+            The loss function module
+        """
+        loss_type = self._get_param(params, 'type')
+        
+        loss_functions = {
+            'mse': nn.MSELoss(),
+            'mae': nn.L1Loss(),
+            'bce': nn.BCELoss(),
+            'bce_with_logits': nn.BCEWithLogitsLoss(),
+            'cross_entropy': nn.CrossEntropyLoss(),
+            'nll': nn.NLLLoss(),
+            'kl_div': nn.KLDivLoss(),
+            'smooth_l1': nn.SmoothL1Loss()
+        }
+        
+        if loss_type not in loss_functions:
+            raise ValidationError(
+                f"Unknown loss function: {loss_type}",
+                context=get_context(),
+                suggestions=[
+                    f"Available loss functions: {', '.join(loss_functions.keys())}"
+                ]
+            )
+        
+        return loss_functions[loss_type]
+
+    def get_optimizer(self, params: list) -> torch.optim.Optimizer:
+        """
+        Get an optimizer by name.
+        
+        Args:
+            params: Optimizer parameters
+            
+        Returns:
+            The optimizer instance
+        """
+        if self.current_model is None:
+            raise ValidationError(
+                "No model available for optimization",
+                context=get_context(),
+                suggestions=["Create a model before configuring optimizer"]
+            )
+        
+        optimizer_type = self._get_param(params, 'type')
+        learning_rate = float(self._get_param(params, 'learning_rate', 0.001))
+        
+        optimizers = {
+            'sgd': lambda: torch.optim.SGD(
+                self.current_model.parameters(),
+                lr=learning_rate
+            ),
+            'adam': lambda: torch.optim.Adam(
+                self.current_model.parameters(),
+                lr=learning_rate
+            ),
+            'adamw': lambda: torch.optim.AdamW(
+                self.current_model.parameters(),
+                lr=learning_rate
+            ),
+            'rmsprop': lambda: torch.optim.RMSprop(
+                self.current_model.parameters(),
+                lr=learning_rate
+            ),
+            'adagrad': lambda: torch.optim.Adagrad(
+                self.current_model.parameters(),
+                lr=learning_rate
+            )
+        }
+        
+        if optimizer_type not in optimizers:
+            raise ValidationError(
+                f"Unknown optimizer: {optimizer_type}",
+                context=get_context(),
+                suggestions=[
+                    f"Available optimizers: {', '.join(optimizers.keys())}"
+                ]
+            )
+        
+        return optimizers[optimizer_type]()
 
 # Example usage
 if __name__ == '__main__':

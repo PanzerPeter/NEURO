@@ -84,14 +84,14 @@ class NeuroLexer:
 
     # Regular expression rule with action for numbers
     def t_NUMBER(self, t):
-        r'\d*\.?\d+'
+        r'-?\d*\.?\d+'
         t.value = float(t.value)
         return t
 
     # Regular expression rule with action for strings
     def t_STRING(self, t):
         r'\"([^\\\n]|(\\.))*?\"'
-        t.value = t.value[1:-1]  # Remove quotes
+        t.value = t.value[1:-1]
         return t
 
     # Regular expression rule for identifiers

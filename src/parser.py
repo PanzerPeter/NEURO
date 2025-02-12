@@ -8,6 +8,7 @@ class NeuroParser:
         
         # Operator precedence to resolve shift/reduce conflicts
         self.precedence = (
+            ('right', 'UMINUS'),  # Add unary minus precedence
             ('left', 'PLUS', 'MINUS'),
             ('left', 'TIMES', 'DIVIDE'),
             ('left', 'DOT'),  # Add precedence for method calls
@@ -107,6 +108,7 @@ class NeuroParser:
         '''term : NUMBER
                 | STRING
                 | ID
+                | MINUS term %prec UMINUS
                 | expression PLUS expression
                 | expression MINUS expression
                 | expression TIMES expression
@@ -118,6 +120,12 @@ class NeuroParser:
                 p[0] = ('string', p[1])
             else:
                 p[0] = ('id', p[1])
+        elif len(p) == 3:  # Unary minus
+            if p[1] == '-':
+                if p[2][0] == 'number':
+                    p[0] = ('number', -p[2][1])
+                else:
+                    p[0] = ('binop', '*', ('number', -1), p[2])
         else:
             p[0] = ('binop', p[2], p[1], p[3])
 
