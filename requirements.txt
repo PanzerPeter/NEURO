@@ -1,0 +1,21 @@
+# Core dependencies
+torch>=2.0.0
+numpy>=1.24.0
+ply>=3.11
+
+# Testing
+pytest>=7.3.1
+pytest-cov>=4.1.0
+
+# Development tools
+black>=23.3.0
+flake8>=6.0.0
+isort>=5.12.0
+
+# Optional dependencies
+matplotlib>=3.7.1  # For visualization
+tqdm>=4.65.0      # For progress bars
+pandas>=2.0.0     # For data manipulation
+
+pyyaml>=6.0  # For matrix file format
+pygments>=2.15.0  # For syntax highlighting 
