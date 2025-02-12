@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="neuro-lang",
-    version="0.1.0",
+    version="0.1.0-alpha",
     packages=find_packages(),
     install_requires=[
         "ply>=3.11",
@@ -17,16 +17,23 @@ setup(
         ],
     },
     author="NEURO Development Team",
-    description="NEURO Programming Language - A language designed for AI development",
+    description="NEURO Programming Language - A language designed for AI development (ALPHA VERSION)",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    keywords="ai, machine learning, programming language",
+    keywords="ai, machine learning, programming language, alpha, experimental",
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 2 - Pre-Alpha",
         "Intended Audience :: Developers",
         "Topic :: Software Development :: Compilers",
         "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
+        "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+        "Operating System :: OS Independent",
+        "Natural Language :: English",
     ],
     python_requires=">=3.7",
+    project_urls={
+        "Homepage": "https://github.com/PanzerPeter/NEURO",
+        "Bug Tracker": "https://github.com/PanzerPeter/NEURO/issues",
+        "Documentation": "https://github.com/PanzerPeter/NEURO#readme",
+    },
 ) 

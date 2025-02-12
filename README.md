@@ -2,6 +2,16 @@
 
 NEURO is a powerful domain-specific language (DSL) designed for creating, training, and evaluating neural networks with a clean and intuitive syntax. Built on top of PyTorch, it combines the flexibility of a high-level language with the performance of modern deep learning frameworks.
 
+> ⚠️ **ALPHA VERSION WARNING**
+>
+> NEURO is currently in ALPHA stage. This means:
+> - The API may change without notice
+> - Features might be incomplete or have bugs
+> - Production use is NOT recommended
+> - No warranty or liability is provided (see LICENSE)
+>
+> **USE AT YOUR OWN RISK**
+
 ## Features
 
 - 🧠 **Intuitive Neural Network Creation**: Define neural networks using a simple, declarative syntax

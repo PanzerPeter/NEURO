@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=64.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neuro-lang"
+version = "0.1.0-alpha"
+description = "NEURO Programming Language - A language designed for AI development (ALPHA VERSION)"
+readme = "README.md"
+authors = [
+    { name = "NEURO Development Team" }
+]
+license = { file = "LICENSE" }
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Compilers",
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+    "Natural Language :: English",
+]
+keywords = ["ai", "machine learning", "programming language", "alpha", "experimental"]
+dependencies = [
+    "ply>=3.11",
+    "numpy>=1.21.0",
+    "torch>=2.0.0",
+    "pytest>=7.0.0",
+    "pyyaml>=6.0",
+]
+requires-python = ">=3.7"
+
+[project.scripts]
+neuro = "src.neuro:main"
+
+[tool.setuptools]
+packages = ["src"]
+
+[project.urls]
+"Homepage" = "https://github.com/PanzerPeter/NEURO"
+"Bug Tracker" = "https://github.com/PanzerPeter/NEURO/issues"
+"Documentation" = "https://github.com/PanzerPeter/NEURO#readme" 
