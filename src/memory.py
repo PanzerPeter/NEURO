@@ -58,7 +58,7 @@ class GradientCheckpoint:
                     def checkpoint_forward(*args, **kwargs):
                         def custom_forward(*inputs):
                             return mod._original_forward(*inputs)
-                        return checkpoint(custom_forward, *args, preserve_rng_state=True)
+                        return checkpoint(custom_forward, *args, use_reentrant=False, preserve_rng_state=True)
                     return checkpoint_forward
                 
                 # Apply checkpointing

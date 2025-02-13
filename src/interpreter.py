@@ -6,7 +6,7 @@ Executes NEURO code with enhanced error handling and memory management.
 import torch
 import torch.nn as nn
 import random
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List, Callable
 from .parser import NeuroParser
 from .matrix import NeuroMatrix
 from .errors import (
@@ -16,6 +16,75 @@ from .errors import (
     get_context
 )
 from .memory import MemoryManager
+import torchvision.models as models
+
+class CustomLayer:
+    """Decorator for custom layer definitions."""
+    def __init__(self, func: Callable):
+        self.func = func
+        self.name = func.__name__
+        
+    def __call__(self, *args, **kwargs):
+        return self.func(*args, **kwargs)
+
+class PretrainedBackbone(nn.Module):
+    """Wrapper for pretrained models used as backbones."""
+    def __init__(self, model_name: str, trainable: bool = False):
+        super().__init__()
+        try:
+            # Handle model creation with weights
+            if model_name.lower() == "resnet18":
+                self.model = models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1)
+            else:
+                # Get the weights enum class for other models
+                weights_enum = getattr(models, f"{model_name}_Weights", None)
+                if weights_enum is None:
+                    raise ConfigurationError(
+                        f"No weights found for model {model_name}",
+                        context=get_context(),
+                        suggestions=[
+                            "Check available models in torchvision.models",
+                            "Use a valid model name"
+                        ]
+                    )
+                self.model = getattr(models, model_name)(weights=weights_enum.DEFAULT)
+            
+            # Remove the final classification layer
+            if hasattr(self.model, 'fc'):
+                self.model.fc = nn.Identity()
+            elif hasattr(self.model, 'classifier'):
+                self.model.classifier = nn.Identity()
+                
+            if not trainable:
+                for param in self.model.parameters():
+                    param.requires_grad = False
+                    
+            # Move model to the same device as the input
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.model = self.model.to(device)
+            
+        except Exception as e:
+            if isinstance(e, ConfigurationError):
+                raise
+            raise ConfigurationError(
+                f"Error initializing pretrained model {model_name}: {str(e)}",
+                context=get_context(),
+                suggestions=[
+                    "Check available models in torchvision.models",
+                    "Use a valid model name",
+                    "Ensure you have internet connection for downloading weights"
+                ]
+            )
+    
+    def forward(self, x):
+        # Ensure input is on the same device as model
+        x = x.to(next(self.model.parameters()).device)
+        # Forward pass through the backbone
+        features = self.model(x)
+        # Add spatial dimensions if they were removed
+        if features.dim() == 2:
+            features = features.unsqueeze(-1).unsqueeze(-1)
+        return features
 
 class ResidualBlock(torch.nn.Module):
     def __init__(self, module):
@@ -254,6 +323,163 @@ class NeuroSequential(torch.nn.Sequential):
         
         print(f"Evaluation - Loss: {avg_loss:.4f}, Accuracy: {accuracy:.4f}")
         return accuracy
+
+class BranchingModule(nn.Module):
+    """Module that supports multiple branches and concatenation."""
+    def __init__(self):
+        super().__init__()
+        self.branches = nn.ModuleDict()
+        self.merge_ops = {}
+        self.current_branch = None
+    
+    def add_branch(self, name: str) -> None:
+        """Add a new branch."""
+        self.branches[name] = nn.ModuleList()
+        self.current_branch = name
+    
+    def add_layer(self, layer: nn.Module) -> None:
+        """Add a layer to current branch."""
+        if self.current_branch is None:
+            raise ValidationError(
+                "No active branch",
+                context=get_context(),
+                suggestions=["Create a branch before adding layers"]
+            )
+        self.branches[self.current_branch].append(layer)
+    
+    def set_merge(self, branches: List[str], operation: str = 'concat') -> None:
+        """Set how branches should be merged."""
+        if operation not in ['concat', 'add', 'multiply']:
+            raise ValidationError(
+                f"Unknown merge operation: {operation}",
+                context=get_context(),
+                suggestions=["Use 'concat', 'add', or 'multiply'"]
+            )
+        self.merge_ops['final'] = (branches, operation)
+    
+    def forward(self, x):
+        """Forward pass through branches and merge."""
+        branch_outputs = {}
+        
+        # Process each branch
+        for name, layers in self.branches.items():
+            branch_x = x
+            for layer in layers:
+                branch_x = layer(branch_x)
+            branch_outputs[name] = branch_x
+        
+        # Merge branches
+        if 'final' in self.merge_ops:
+            branches, operation = self.merge_ops['final']
+            outputs = [branch_outputs[b] for b in branches]
+            
+            if operation == 'concat':
+                return torch.cat(outputs, dim=1)
+            elif operation == 'add':
+                return sum(outputs)
+            else:  # multiply
+                result = outputs[0]
+                for o in outputs[1:]:
+                    result = result * o
+                return result
+        
+        # If no merge operation, return last branch output
+        return list(branch_outputs.values())[-1]
+
+class TrainingCallback:
+    """Base class for training callbacks."""
+    def on_training_begin(self, model, data):
+        pass
+    
+    def on_epoch_begin(self, epoch, logs=None):
+        pass
+    
+    def on_batch_begin(self, batch, logs=None):
+        pass
+    
+    def on_batch_end(self, batch, logs=None):
+        pass
+    
+    def on_epoch_end(self, epoch, logs=None):
+        pass
+    
+    def on_training_end(self, logs=None):
+        pass
+
+class EarlyStopping(TrainingCallback):
+    """Early stopping callback."""
+    def __init__(self, patience=5, min_delta=0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.best_loss = None
+        self.early_stop = False
+    
+    def on_epoch_end(self, epoch, logs=None):
+        current_loss = logs.get('loss')
+        if current_loss is None:
+            return
+        
+        if self.best_loss is None:
+            self.best_loss = current_loss
+        elif current_loss > self.best_loss - self.min_delta:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_loss = current_loss
+            self.counter = 0
+
+class ModelCheckpoint(TrainingCallback):
+    """Model checkpoint callback."""
+    def __init__(self, filepath, save_best_only=False, monitor='loss'):
+        self.filepath = filepath
+        self.save_best_only = save_best_only
+        self.monitor = monitor
+        self.best = float('inf')
+        self.model = None
+    
+    def on_training_begin(self, model, data):
+        self.model = model
+    
+    def on_epoch_end(self, epoch, logs=None):
+        if not self.model:
+            return
+            
+        current = logs.get(self.monitor)
+        if current is None:
+            return
+        
+        if self.save_best_only:
+            if current < self.best:
+                self.best = current
+                torch.save(self.model.state_dict(), self.filepath)
+        else:
+            torch.save(self.model.state_dict(), 
+                      self.filepath.format(epoch=epoch, **logs))
+
+class TensorBoardLogger(TrainingCallback):
+    """TensorBoard logging callback."""
+    def __init__(self, log_dir):
+        from torch.utils.tensorboard import SummaryWriter
+        self.writer = SummaryWriter(log_dir)
+    
+    def on_epoch_end(self, epoch, logs=None):
+        for name, value in logs.items():
+            self.writer.add_scalar(name, value, epoch)
+    
+    def on_training_end(self, logs=None):
+        self.writer.close()
+
+def before_training(func):
+    """Decorator for preprocessing data before training."""
+    func._is_before_training = True
+    return func
+
+def after_epoch(func):
+    """Decorator for post-epoch processing."""
+    func._is_after_epoch = True
+    return func
 
 class NeuroInterpreter:
     def __init__(self, device: Optional[str] = None):
@@ -497,6 +723,7 @@ class NeuroInterpreter:
             if layer_type == 'Dense':
                 units = int(self._get_param(params, 'units'))
                 activation = self._get_param(params, 'activation', 'relu')
+                in_features = int(self._get_param(params, 'in_features', self._get_last_size()))
                 
                 # Validate units
                 if units <= 0:
@@ -508,7 +735,7 @@ class NeuroInterpreter:
                     )
                 
                 layer = nn.Sequential(
-                    nn.Linear(self._get_last_size(), units),
+                    nn.Linear(in_features, units),
                     self._get_activation(activation)
                 )
                 self._update_last_size(units)
@@ -735,6 +962,7 @@ class NeuroInterpreter:
             teacher_forcing_ratio = float(param_dict.get('teacher_forcing_ratio', 0.5))
             scheduler = param_dict.get('scheduler', None)
             warmup_steps = int(param_dict.get('warmup_steps', 10))
+            callbacks = param_dict.get('callbacks', [])
             data = param_dict['positional'][0] if param_dict['positional'] else None
             
             if not isinstance(data, NeuroMatrix):
@@ -745,9 +973,6 @@ class NeuroInterpreter:
                     details={"data_type": type(data).__name__}
                 )
             
-            # Convert data to PyTorch dataset
-            dataset = data.to_torch_dataset()
-            
             # Initialize optimizer and scheduler
             optimizer = torch.optim.Adam(obj.parameters(), lr=learning_rate)
             if scheduler == 'cosine':
@@ -755,15 +980,46 @@ class NeuroInterpreter:
             elif scheduler == 'step':
                 obj.set_scheduler('step', optimizer, warmup_steps)
             
-            # Training loop
-            criterion = self.loss_function or torch.nn.BCEWithLogitsLoss()  # Default to BCE for binary classification
+            # Initialize callbacks
+            callback_instances = []
+            for callback in callbacks:
+                if isinstance(callback, dict):
+                    callback_type = callback.pop('type')
+                    if callback_type == 'EarlyStopping':
+                        callback_instances.append(EarlyStopping(**callback))
+                    elif callback_type == 'ModelCheckpoint':
+                        callback_instances.append(ModelCheckpoint(**callback))
+                    elif callback_type == 'TensorBoardLogger':
+                        callback_instances.append(TensorBoardLogger(**callback))
+            
+            # Training loop with callbacks
+            criterion = self.loss_function or torch.nn.BCEWithLogitsLoss()
             obj.train()
+            
+            # Call before_training hooks
+            for attr_name in dir(obj):
+                attr = getattr(obj, attr_name)
+                if hasattr(attr, '_is_before_training'):
+                    data = attr(data)
+            
+            # Training begin callbacks
+            for callback in callback_instances:
+                callback.on_training_begin(obj, data)
             
             for epoch in range(epochs):
                 total_loss = 0
                 batches = 0
                 
-                for inputs, targets in dataset:
+                # Epoch begin callbacks
+                for callback in callback_instances:
+                    callback.on_epoch_begin(epoch)
+                
+                for batch_idx, (inputs, targets) in enumerate(data):
+                    # Batch begin callbacks
+                    batch_logs = {'batch': batch_idx}
+                    for callback in callback_instances:
+                        callback.on_batch_begin(batch_idx, batch_logs)
+                    
                     optimizer.zero_grad()
                     
                     # Forward pass with teacher forcing
@@ -771,12 +1027,12 @@ class NeuroInterpreter:
                         outputs = obj(inputs, teacher_forcing_ratio)
                     else:
                         outputs = obj(inputs)
-                        if outputs.size(-1) == 1:  # Binary classification
+                        if outputs.size(-1) == 1:
                             outputs = outputs.squeeze(-1)
-                            targets = targets.squeeze(-1)  # Match target shape
+                            targets = targets.squeeze(-1)
                     
                     # Calculate loss
-                    loss = criterion(outputs, targets.float())  # Convert targets to float for BCE
+                    loss = criterion(outputs, targets.float())
                     
                     # Backward pass with gradient clipping
                     loss.backward()
@@ -789,9 +1045,32 @@ class NeuroInterpreter:
                     
                     total_loss += loss.item()
                     batches += 1
+                    
+                    # Batch end callbacks
+                    batch_logs.update({'loss': loss.item()})
+                    for callback in callback_instances:
+                        callback.on_batch_end(batch_idx, batch_logs)
                 
                 avg_loss = total_loss / batches
+                
+                # Epoch end callbacks
+                epoch_logs = {'loss': avg_loss, 'epoch': epoch}
+                for callback in callback_instances:
+                    callback.on_epoch_end(epoch, epoch_logs)
+                
+                # Call after_epoch hooks
+                for attr_name in dir(obj):
+                    attr = getattr(obj, attr_name)
+                    if hasattr(attr, '_is_after_epoch'):
+                        if attr(obj, data) == 'StopTraining':
+                            print(f"Training stopped early at epoch {epoch+1}")
+                            break
+                
                 print(f"Epoch {epoch+1}/{epochs}, Loss: {avg_loss:.4f}")
+            
+            # Training end callbacks
+            for callback in callback_instances:
+                callback.on_training_end({'final_loss': avg_loss})
             
             return obj
         
@@ -850,16 +1129,62 @@ class NeuroInterpreter:
         return matrix
 
     def execute_save_model(self, model_name, filename):
-        model = self.variables.get(model_name)
-        if model is None:
-            raise ValueError(f"Model {model_name} not found")
-        torch.save(model, filename)  # Save the entire model, not just state_dict
-        return None
+        """Save model weights safely."""
+        try:
+            model = self.variables.get(model_name)
+            if model is None:
+                raise ValidationError(
+                    f"Model {model_name} not found",
+                    context=get_context(),
+                    suggestions=["Check if the model name is correct"]
+                )
+            
+            # Save only the model weights
+            torch.save(model.state_dict(), filename)
+            return None
+        
+        except Exception as e:
+            raise ValidationError(
+                f"Error saving model: {str(e)}",
+                context=get_context(),
+                suggestions=[
+                    "Check write permissions for the target directory",
+                    "Ensure sufficient disk space",
+                    "Verify the path is valid"
+                ]
+            )
 
     def execute_load_model(self, filename):
-        model = torch.load(filename)  # Load the entire model
-        model.eval()  # Set to evaluation mode
-        return model
+        """Load a model safely with weights only."""
+        try:
+            # Load the model architecture first
+            model = self.current_model
+            if model is None:
+                raise ValidationError(
+                    "No model architecture defined for loading weights",
+                    context=get_context(),
+                    suggestions=[
+                        "Create a model before loading weights",
+                        "Define the model architecture explicitly"
+                    ]
+                )
+            
+            # Load weights safely
+            state_dict = torch.load(filename, weights_only=True)
+            model.load_state_dict(state_dict)
+            model.eval()  # Set to evaluation mode
+            return model
+        
+        except Exception as e:
+            raise ValidationError(
+                f"Error loading model: {str(e)}",
+                context=get_context(),
+                suggestions=[
+                    "Verify the model file exists",
+                    "Check if the model architecture matches the saved weights",
+                    "Ensure the file contains valid model weights"
+                ]
+            )
 
     def execute_config(self, config_type, params):
         """Execute configuration statements (loss and optimizer)"""

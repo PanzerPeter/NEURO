@@ -21,6 +21,15 @@ class NeuroLexer:
         'LOSS',
         'OPTIMIZER',
         'PRINT',
+        'CUSTOM_LAYER',
+        'PRETRAINED',
+        'BACKBONE',
+        'BRANCH',
+        'CONCAT',
+        'ADD',
+        'MULTIPLY',
+        'BEFORE_TRAINING',
+        'AFTER_EPOCH',
         
         # Operators
         'EQUALS',
@@ -28,6 +37,7 @@ class NeuroLexer:
         'MINUS',
         'TIMES',
         'DIVIDE',
+        'AT',  # For decorators
         
         # Delimiters
         'LPAREN',
@@ -36,11 +46,14 @@ class NeuroLexer:
         'DOT',
         'LBRACE',
         'RBRACE',
+        'LBRACKET',
+        'RBRACKET',
         
         # Data types
         'NUMBER',
         'STRING',
         'ID',
+        'BOOL',
     )
 
     # Regular expression rules for simple tokens
@@ -55,6 +68,9 @@ class NeuroLexer:
     t_DOT = r'\.'
     t_LBRACE = r'\{'
     t_RBRACE = r'\}'
+    t_LBRACKET = r'\['
+    t_RBRACKET = r'\]'
+    t_AT = r'@'
 
     # Keywords
     keywords = {
@@ -75,6 +91,17 @@ class NeuroLexer:
         'loss': 'LOSS',
         'optimizer': 'OPTIMIZER',
         'print': 'PRINT',
+        'custom_layer': 'CUSTOM_LAYER',
+        'pretrained': 'PRETRAINED',
+        'Backbone': 'BACKBONE',
+        'Branch': 'BRANCH',
+        'Concat': 'CONCAT',
+        'Add': 'ADD',
+        'Multiply': 'MULTIPLY',
+        'before_training': 'BEFORE_TRAINING',
+        'after_epoch': 'AFTER_EPOCH',
+        'true': 'BOOL',
+        'false': 'BOOL',
     }
 
     def __init__(self):

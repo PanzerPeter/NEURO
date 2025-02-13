@@ -39,4 +39,8 @@ packages = ["src"]
 [project.urls]
 "Homepage" = "https://github.com/PanzerPeter/NEURO"
 "Bug Tracker" = "https://github.com/PanzerPeter/NEURO/issues"
-"Documentation" = "https://github.com/PanzerPeter/NEURO#readme" 
+"Documentation" = "https://github.com/PanzerPeter/NEURO#readme"
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function" 
