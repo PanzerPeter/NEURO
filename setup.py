@@ -6,10 +6,14 @@ setup(
     packages=find_packages(),
     install_requires=[
         "ply>=3.11",
-        "numpy>=1.21.0",
+        "numpy>=1.24.0",
         "torch>=2.0.0",
-        "pytest>=7.0.0",
+        "pytest>=7.3.1",
         "pyyaml>=6.0",
+        "matplotlib>=3.7.1",
+        "tqdm>=4.65.0",
+        "pandas>=2.0.0",
+        "pygments>=2.15.0",
     ],
     entry_points={
         'console_scripts': [

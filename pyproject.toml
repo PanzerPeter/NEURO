@@ -23,12 +23,24 @@ classifiers = [
 keywords = ["ai", "machine learning", "programming language", "alpha", "experimental"]
 dependencies = [
     "ply>=3.11",
-    "numpy>=1.21.0",
+    "numpy>=1.24.0",
     "torch>=2.0.0",
-    "pytest>=7.0.0",
     "pyyaml>=6.0",
+    "pandas>=2.0.0",
+    "matplotlib>=3.7.1",
+    "tqdm>=4.65.0",
+    "pygments>=2.15.0",
 ]
 requires-python = ">=3.7"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.3.1",
+    "pytest-cov>=4.1.0",
+    "black>=23.3.0",
+    "flake8>=6.0.0",
+    "isort>=5.12.0",
+]
 
 [project.scripts]
 neuro = "src.neuro:main"
@@ -43,4 +55,12 @@ packages = ["src"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"
-asyncio_default_fixture_loop_scope = "function" 
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.black]
+line-length = 88
+target-version = ["py37"]
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3 

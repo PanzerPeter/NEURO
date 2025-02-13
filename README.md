@@ -79,7 +79,6 @@ NEURO/
 │   ├── matrix.py        # Data handling implementation
 │   └── neuro.py         # Main entry point
 ├── examples/            # Example NEURO programs
-├── tests/              # Unit tests
 ├── docs/               # Documentation
 └── requirements.txt    # Project dependencies
 ```
