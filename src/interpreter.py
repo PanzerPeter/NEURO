@@ -491,6 +491,20 @@ class NeuroInterpreter:
         self.current_model = None
         self.last_layer_size = None
     
+    def create_matrix(self, inputs: torch.Tensor, targets: torch.Tensor) -> 'NeuroMatrix':
+        """
+        Create a NeuroMatrix from input and target tensors.
+        
+        Args:
+            inputs: Input tensor
+            targets: Target tensor
+            
+        Returns:
+            NeuroMatrix object
+        """
+        from .matrix import NeuroMatrix
+        return NeuroMatrix.from_tensors(inputs, targets)
+
     def interpret(self, source_code: str) -> Any:
         """
         Interprets NEURO source code with enhanced error handling.
@@ -533,13 +547,21 @@ class NeuroInterpreter:
             if node_type == 'program':
                 return self.execute_program(ast[1])
             elif node_type == 'neural_network':
-                return self.create_neural_network(ast[1], ast[2], ast[3], ast[4])
+                return self.create_neural_network(ast[1], ast[2], ast[3])
             elif node_type == 'method_call':
                 return self.execute_method_call(ast[1], ast[2], ast[3])
             elif node_type == 'assignment':
                 return self.execute_assignment(ast[1], ast[2])
+            elif node_type == 'decorated':
+                return self.execute_decorated(ast[1], ast[2])
+            elif node_type == 'custom_layer':
+                return self.execute_custom_layer(ast[1], ast[2], ast[3], ast[4])
+            elif node_type == 'branch':
+                return self.execute_branch(ast[1], ast[2])
             elif node_type == 'binop':
                 return self.execute_binop(ast[1], ast[2], ast[3])
+            elif node_type == 'unary_op':
+                return self.execute_unary_op(ast[1], ast[2])
             elif node_type == 'number':
                 return float(ast[1])
             elif node_type == 'string':
@@ -560,6 +582,14 @@ class NeuroInterpreter:
                 return self.execute_layer(ast[1], ast[2], ast[3], ast[4])
             elif node_type == 'config':
                 return self.execute_config(ast[1], ast[2])
+            elif node_type == 'list':
+                return [self.execute_ast(item) for item in ast[1]]
+            elif node_type == 'dict':
+                return {k: self.execute_ast(v) for k, v in ast[1]}
+            elif node_type == 'return':
+                return self.execute_return(ast[1])
+            elif node_type == 'for':
+                return self.execute_for_loop(ast[1], ast[2], ast[3])
             else:
                 raise ValueError(f"Unknown node type: {node_type}")
         
@@ -577,12 +607,11 @@ class NeuroInterpreter:
                 details={"ast_node": str(ast)}
             ) from e
     
-    def create_neural_network(self, name: str, params: list, layers: list, config: Optional[list] = None) -> nn.Module:
+    def create_neural_network(self, params: list, layers: Optional[list], config: Optional[list] = None) -> nn.Module:
         """
         Creates a neural network with validation.
         
         Args:
-            name: Network name
             params: Network parameters
             layers: Layer configurations
             config: Optional network configuration
@@ -641,7 +670,7 @@ class NeuroInterpreter:
             self.memory_manager = memory_manager
             
             # Store in variables
-            self.variables[name] = model
+            self.variables[params[0][2]] = model
             self.current_model = model
             
             # Initialize loss function if not set
@@ -1211,6 +1240,8 @@ class NeuroInterpreter:
                 return float(expr[1])
             elif expr_type == 'string':
                 return str(expr[1])
+            elif expr_type == 'boolean':
+                return bool(expr[1])
             elif expr_type == 'id':
                 # Handle boolean literals
                 if expr[1].lower() == 'true':
@@ -1366,6 +1397,122 @@ class NeuroInterpreter:
             )
         
         return optimizers[optimizer_type]()
+
+    def execute_decorated(self, decorator: tuple, statement: tuple) -> Any:
+        """Execute a decorated statement."""
+        decorator_name = decorator[1]
+        decorator_args = decorator[2]
+        
+        if decorator_name == 'custom_layer':
+            return self.register_custom_layer(statement)
+        elif decorator_name == 'pretrained':
+            return self.load_pretrained_model(decorator_args, statement)
+        else:
+            raise NeuroError(f"Unknown decorator: {decorator_name}")
+            
+    def execute_custom_layer(self, name: str, input_var: str, args: tuple, body: tuple) -> Any:
+        """Execute a custom layer definition."""
+        def layer_func(x, *params):
+            # Create new scope for the layer
+            old_vars = self.variables.copy()
+            self.variables[input_var] = x
+            if args:
+                self.variables[args[0]] = params[0]
+                
+            result = self.execute_ast(body)
+            
+            # Restore old scope
+            self.variables = old_vars
+            return result
+            
+        self.variables[name] = layer_func
+        return layer_func
+        
+    def execute_branch(self, name: str, body: tuple) -> Any:
+        """Execute a model branch definition."""
+        return self.create_branch(name, lambda: self.execute_ast(body))
+
+    def execute_unary_op(self, op: str, operand: tuple) -> Any:
+        """Execute a unary operation."""
+        value = self.execute_ast(operand)
+        if op == '-':
+            return -value
+        raise ValueError(f"Unknown unary operator: {op}")
+
+    def execute_return(self, value: tuple) -> Any:
+        """Execute a return statement."""
+        return self.execute_ast(value)
+
+    def execute_for_loop(self, var_name: str, limit: tuple, body: list) -> None:
+        """Execute a for loop."""
+        limit_val = self.execute_ast(limit)
+        for i in range(limit_val):
+            self.variables[var_name] = i
+            for stmt in body:
+                self.execute_ast(stmt)
+
+    def load_pretrained_model(self, model_name: tuple, statement: tuple) -> Any:
+        """
+        Load a pretrained model.
+        
+        Args:
+            model_name: The name of the pretrained model
+            statement: The statement to execute with the pretrained model
+            
+        Returns:
+            The result of executing the statement with the pretrained model
+        """
+        try:
+            model_name = self.execute_ast(model_name)
+            
+            # Import torchvision for pretrained models
+            try:
+                import torchvision.models as models
+            except ImportError:
+                raise ConfigurationError(
+                    "Failed to import torchvision",
+                    context=get_context(),
+                    suggestions=[
+                        "Install torchvision",
+                        "Check Python environment"
+                    ]
+                )
+            
+            # Get the model class
+            model_class = getattr(models, model_name.lower(), None)
+            if model_class is None:
+                raise ConfigurationError(
+                    f"Failed to load pretrained model: {model_name}",
+                    context=get_context(),
+                    suggestions=[
+                        "Check model name",
+                        "Verify model is available in torchvision"
+                    ]
+                )
+            
+            # Load pretrained model
+            model = model_class(pretrained=True)
+            
+            # Execute the statement with the model
+            if isinstance(statement, tuple) and statement[0] == 'assignment':
+                var_name = statement[1]
+                self.variables[var_name] = model
+                return model
+            
+            return model
+            
+        except Exception as e:
+            if isinstance(e, NeuroError):
+                raise
+            raise ConfigurationError(
+                f"Failed to load pretrained model: {str(e)}",
+                context=get_context(),
+                suggestions=[
+                    "Check model name",
+                    "Verify model is available",
+                    "Check network connection"
+                ]
+            ) from e
 
 # Example usage
 if __name__ == '__main__':
