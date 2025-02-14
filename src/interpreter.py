@@ -547,7 +547,10 @@ class NeuroInterpreter:
             if node_type == 'program':
                 return self.execute_program(ast[1])
             elif node_type == 'neural_network':
-                return self.create_neural_network(ast[1], ast[2], ast[3])
+                # Neural network node should have parameters and layers
+                params = ast[1] if len(ast) > 1 else []
+                layers = ast[2] if len(ast) > 2 else []
+                return self.create_neural_network(params, layers)
             elif node_type == 'method_call':
                 return self.execute_method_call(ast[1], ast[2], ast[3])
             elif node_type == 'assignment':
@@ -555,7 +558,7 @@ class NeuroInterpreter:
             elif node_type == 'decorated':
                 return self.execute_decorated(ast[1], ast[2])
             elif node_type == 'custom_layer':
-                return self.execute_custom_layer(ast[1], ast[2], ast[3], ast[4])
+                return self.execute_custom_layer(ast[1], ast[2], ast[3])
             elif node_type == 'branch':
                 return self.execute_branch(ast[1], ast[2])
             elif node_type == 'binop':
@@ -579,7 +582,7 @@ class NeuroInterpreter:
             elif node_type == 'load_model':
                 return self.execute_load_model(ast[1])
             elif node_type == 'layer':
-                return self.execute_layer(ast[1], ast[2], ast[3], ast[4])
+                return self.execute_layer(ast[1], ast[2])
             elif node_type == 'config':
                 return self.execute_config(ast[1], ast[2])
             elif node_type == 'list':
@@ -607,22 +610,34 @@ class NeuroInterpreter:
                 details={"ast_node": str(ast)}
             ) from e
     
-    def create_neural_network(self, params: list, layers: Optional[list], config: Optional[list] = None) -> nn.Module:
+    def create_neural_network(self, params: list, layers: Optional[list]) -> nn.Module:
         """
         Creates a neural network with validation.
         
         Args:
             params: Network parameters
             layers: Layer configurations
-            config: Optional network configuration
             
         Returns:
             The constructed model
         """
         try:
             # Extract and validate input size
-            input_size = int(self._get_param(params, 'input_size'))
-            output_size = int(self._get_param(params, 'output_size'))
+            input_size = None
+            output_size = None
+            for param in params:
+                if param[0] == 'named_param':
+                    if param[1] == 'input_size':
+                        input_size = float(self.execute_ast(param[2]))
+                    elif param[1] == 'output_size':
+                        output_size = float(self.execute_ast(param[2]))
+            
+            if input_size is None or output_size is None:
+                raise ValidationError(
+                    "Missing required parameters: input_size and output_size",
+                    context=get_context(),
+                    suggestions=["Specify both input_size and output_size"]
+                )
             
             if input_size <= 0 or output_size <= 0:
                 raise ValidationError(
@@ -635,28 +650,11 @@ class NeuroInterpreter:
                     }
                 )
             
-            # Check for unreasonable dimensions
-            if input_size > 1e5 or output_size > 1e5:
-                raise NeuroError(
-                    "Model dimensions too large",
-                    context=get_context(),
-                    suggestions=[
-                        "Reduce input/output dimensions",
-                        "Consider using a more efficient architecture",
-                        "Split the model into smaller components"
-                    ],
-                    details={
-                        "input_size": input_size,
-                        "output_size": output_size,
-                        "max_allowed": 1e5
-                    }
-                )
-            
             # Initialize layer tracking
             self.last_layer_size = input_size
             
             # Build the model
-            model = self._build_model(params, layers)
+            model = self._build_model(input_size, output_size, layers or [])
             
             # Set up memory management
             memory_manager = MemoryManager(
@@ -669,46 +667,34 @@ class NeuroInterpreter:
             model.memory_manager = memory_manager
             self.memory_manager = memory_manager
             
-            # Store in variables
-            self.variables[params[0][2]] = model
-            self.current_model = model
-            
-            # Initialize loss function if not set
-            if not hasattr(self, 'loss_function'):
-                self.loss_function = nn.BCEWithLogitsLoss()
-            
             return model
             
-        except RuntimeError as e:
-            if "memory" in str(e).lower():
-                raise MemoryError("Not enough memory to create model")
-            raise
+        except Exception as e:
+            if isinstance(e, NeuroError):
+                raise
+            raise ConfigurationError(
+                f"Error creating neural network: {str(e)}",
+                context=get_context(),
+                suggestions=[
+                    "Check parameter values",
+                    "Verify layer configurations",
+                    "Ensure sufficient memory"
+                ]
+            ) from e
     
-    def _build_model(self, params: list, layers: Optional[list]) -> nn.Module:
+    def _build_model(self, input_size: float, output_size: float, layers: list) -> nn.Module:
         """
         Builds a neural network model with validation.
         
         Args:
-            params: Network parameters
+            input_size: Size of input layer
+            output_size: Size of output layer
             layers: Layer configurations
             
         Returns:
             The constructed model
         """
         try:
-            # Extract parameters
-            input_size = self._get_param(params, 'input_size')
-            output_size = self._get_param(params, 'output_size')
-            
-            # Validate parameters
-            if input_size <= 0 or output_size <= 0:
-                raise ValidationError(
-                    "Invalid model dimensions",
-                    context=get_context(),
-                    suggestions=["Input and output sizes must be positive"],
-                    details={"input_size": input_size, "output_size": output_size}
-                )
-            
             # Create model with custom Sequential class
             model = NeuroSequential()
             model.max_grad_norm = None  # Initialize gradient clipping
@@ -717,9 +703,10 @@ class NeuroInterpreter:
             # Add layers if specified
             if layers:
                 for layer in layers:
-                    layer_type = layer[1]
-                    layer_params = layer[2]
-                    model.append(self._create_layer(layer_type, layer_params))
+                    if layer[0] == 'layer':
+                        layer_type = layer[1]
+                        layer_params = layer[2] if len(layer) > 2 else []
+                        model.append(self._create_layer(layer_type, layer_params))
             
             return model
             
@@ -733,8 +720,7 @@ class NeuroInterpreter:
                     "Check layer parameters",
                     "Verify layer compatibility",
                     "Ensure sufficient memory"
-                ],
-                details={"error_location": "model_building"}
+                ]
             ) from e
     
     def _create_layer(self, layer_type: str, params: list) -> nn.Module:

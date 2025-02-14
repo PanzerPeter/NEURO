@@ -105,13 +105,15 @@ class NeuroParser:
         t.lexer.skip(1)
 
     precedence = (
-        ('left', 'OR'),
+        ('right', 'NOT'),
         ('left', 'AND'),
+        ('left', 'OR'),
         ('left', 'EQUALS_EQUALS', 'NOT_EQUALS'),
         ('left', 'LESS_THAN', 'GREATER_THAN', 'LESS_THAN_EQUALS', 'GREATER_THAN_EQUALS'),
         ('left', 'PLUS', 'MINUS'),
-        ('left', 'TIMES', 'DIVIDE'),
-        ('nonassoc', 'UMINUS'),
+        ('left', 'TIMES', 'DIVIDE', 'MODULO'),
+        ('right', 'POWER'),
+        ('right', 'UMINUS'),
     )
 
     def __init__(self):
@@ -149,7 +151,9 @@ class NeuroParser:
     def p_statement(self, p):
         '''
         statement : expression SEMI
+                 | expression
                  | assignment SEMI
+                 | assignment
                  | neural_network_stmt
                  | loss_stmt
                  | optimizer_stmt
@@ -164,7 +168,9 @@ class NeuroParser:
                  | print_stmt
                  | return_stmt
                  | for_loop
-                 | layer_def SEMI
+                 | layer_def
+                 | decorated_statement
+                 | method_call
                  | empty
         '''
         p[0] = p[1]
@@ -202,13 +208,20 @@ class NeuroParser:
     def p_neural_network_stmt(self, p):
         '''
         neural_network_stmt : ID EQUALS NEURAL_NETWORK LPAREN parameter_list RPAREN neural_block
+                          | ID EQUALS NEURAL_NETWORK LPAREN RPAREN neural_block
                           | ID EQUALS NEURAL_NETWORK LPAREN parameter_list RPAREN SEMI
+                          | ID EQUALS NEURAL_NETWORK LPAREN RPAREN SEMI
         '''
-        if len(p) == 8:
-            layers = p[7] if isinstance(p[7], list) else []
-            p[0] = ('assignment', p[1], ('neural_network', p[5], layers))
-        else:
-            p[0] = ('assignment', p[1], ('neural_network', p[5], []))
+        if len(p) == 7:  # No parameters
+            if p[6] == ';':
+                p[0] = ('assignment', p[1], ('neural_network', [], []))
+            else:
+                p[0] = ('assignment', p[1], ('neural_network', [], p[6]))
+        elif len(p) == 8:  # With parameters or with block
+            if p[7] == ';':
+                p[0] = ('assignment', p[1], ('neural_network', p[5] if p[5] else [], []))
+            else:
+                p[0] = ('assignment', p[1], ('neural_network', p[5] if p[5] else [], p[7]))
 
     def p_neural_block(self, p):
         '''
@@ -216,36 +229,45 @@ class NeuroParser:
                     | LBRACE RBRACE
         '''
         if len(p) == 4:
-            p[0] = p[2] if p[2] else []
+            p[0] = p[2] if isinstance(p[2], list) else [p[2]]
         else:
             p[0] = []
 
     def p_layer_list(self, p):
         '''
-        layer_list : layer_def SEMI
-                  | layer_list layer_def SEMI
+        layer_list : layer_def
+                  | layer_list layer_def
                   | empty
         '''
-        if len(p) == 2:  # Empty case
-            p[0] = []
-        elif len(p) == 3:  # Single layer with semicolon
-            p[0] = [p[1]]
-        else:  # Multiple layers
+        if len(p) == 2:
+            if p[1] is None:  # empty case
+                p[0] = []
+            else:
+                p[0] = [p[1]]
+        else:
             p[0] = p[1] + [p[2]]
 
     def p_layer_def(self, p):
         '''
-        layer_def : layer_type LPAREN parameter_list RPAREN
+        layer_def : layer_type LPAREN parameter_list RPAREN SEMI
+                 | layer_type LPAREN RPAREN SEMI
+                 | layer_type LPAREN parameter_list RPAREN LBRACE layer_list RBRACE
+                 | layer_type LPAREN RPAREN LBRACE layer_list RBRACE
+                 | layer_type LPAREN parameter_list RPAREN
                  | layer_type LPAREN RPAREN
-                 | ID LPAREN parameter_list RPAREN
-                 | ID LPAREN RPAREN
         '''
-        if len(p) == 5:  # With parameters
-            layer_name = p[1].lower() if isinstance(p[1], str) else p[1]
-            p[0] = ('layer', layer_name, p[3])
-        else:  # Without parameters
-            layer_name = p[1].lower() if isinstance(p[1], str) else p[1]
-            p[0] = ('layer', layer_name, [])
+        if len(p) == 6 and p[5] == ';':  # With parameters and semicolon
+            p[0] = ('layer', p[1], p[3] if len(p) > 3 and p[3] else [])
+        elif len(p) == 5 and p[4] == ';':  # Empty parameters and semicolon
+            p[0] = ('layer', p[1], [])
+        elif len(p) == 8:  # With parameters and sublayers
+            p[0] = ('layer', p[1], p[3] if len(p) > 3 and p[3] else [], p[6])
+        elif len(p) == 7:  # Empty parameters with sublayers
+            p[0] = ('layer', p[1], [], p[5])
+        elif len(p) == 5:  # With parameters, no semicolon
+            p[0] = ('layer', p[1], p[3] if len(p) > 3 and p[3] else [])
+        else:  # Empty parameters, no semicolon
+            p[0] = ('layer', p[1], [])
 
     def p_layer_type(self, p):
         '''
@@ -259,6 +281,8 @@ class NeuroParser:
                   | GRU
                   | ATTENTION
                   | EMBEDDING
+                  | BRANCH
+                  | ID
         '''
         p[0] = p[1]
 
@@ -266,31 +290,21 @@ class NeuroParser:
         '''
         parameter_list : named_param
                       | parameter_list COMMA named_param
-                      | expression
-                      | parameter_list COMMA expression
                       | empty
         '''
         if len(p) == 2:
-            if p[1] is None:  # Empty case
+            if p[1] is None:  # empty case
                 p[0] = []
-            else:  # Single parameter
+            else:
                 p[0] = [p[1]]
-        else:  # Multiple parameters
+        else:
             p[0] = p[1] + [p[3]]
 
     def p_named_param(self, p):
         '''
         named_param : ID EQUALS expression
-                   | ID EQUALS STRING
-                   | ID EQUALS NUMBER
         '''
-        if isinstance(p[3], str) and p[3].startswith('"') and p[3].endswith('"'):
-            # Remove quotes from string literals
-            p[0] = ('named_param', p[1], ('string', p[3][1:-1]))
-        elif isinstance(p[3], (int, float)):
-            p[0] = ('named_param', p[1], ('number', float(p[3])))
-        else:
-            p[0] = ('named_param', p[1], p[3])
+        p[0] = ('named_param', p[1], p[3])
 
     def p_assignment(self, p):
         '''assignment : ID EQUALS expression'''
@@ -356,40 +370,33 @@ class NeuroParser:
 
     def p_decorated_statement(self, p):
         '''
-        decorated_statement : AT decorator_expr DEF ID LPAREN parameters RPAREN block
-                          | AT decorator_expr DEF ID LPAREN RPAREN block
-                          | AT decorator_expr DEF ID LPAREN ID RPAREN block
+        decorated_statement : AT decorator_expr statement
+                          | AT decorator_expr function_def
+                          | AT decorator_expr method_call
                           | AT decorator_expr branch_def
         '''
-        if len(p) == 9:
-            if isinstance(p[6], str):  # Single parameter case
-                p[0] = ('custom_layer', p[4], p[6], p[8])
-            else:  # Parameters list case
-                p[0] = ('custom_layer', p[4], p[6], p[8])
-        elif len(p) == 8:  # No parameters case
-            p[0] = ('custom_layer', p[4], [], p[7])
-        else:  # Branch case
-            p[0] = ('decorated', p[2], p[4])
+        p[0] = ('decorated', p[2], p[3])
 
     def p_decorator_expr(self, p):
         '''
         decorator_expr : PRETRAINED LPAREN STRING RPAREN
                      | CUSTOM_LAYER
                      | ID
-                     | ID LPAREN parameters RPAREN
+                     | ID LPAREN parameter_list RPAREN
                      | ID LPAREN RPAREN
+                     | PRETRAINED
         '''
-        if len(p) == 5:
-            if p[1] == 'pretrained':
-                p[0] = ('decorator', p[1], p[3])
-            else:
-                p[0] = ('decorator', p[1], p[3])
+        if len(p) == 5 and p[1] == 'pretrained':
+            p[0] = ('decorator', 'pretrained', ('string', p[3]))
         elif len(p) == 2:
-            p[0] = ('decorator', p[1], None)
-        elif len(p) == 4:
-            p[0] = ('decorator', p[1], [])
-        else:
+            if p[1] == 'pretrained':
+                p[0] = ('decorator', 'pretrained', None)
+            else:
+                p[0] = ('decorator', p[1], None)
+        elif len(p) == 5:
             p[0] = ('decorator', p[1], p[3])
+        else:
+            p[0] = ('decorator', p[1], [])
 
     def p_decorator_list(self, p):
         '''
@@ -407,40 +414,42 @@ class NeuroParser:
     def p_custom_layer_stmt(self, p):
         '''
         custom_layer_stmt : decorator_list function_def
+                        | AT CUSTOM_LAYER function_def
         '''
-        # Ensure p[1] is a list and contains at least one decorator
-        decorators = p[1] if isinstance(p[1], list) else [p[1]]
-        if not decorators or not isinstance(decorators[0], tuple):
-            decorators = [decorators]
-        # Return just the decorator tuple, not wrapped in a list
-        p[0] = ('decorated', decorators[0], p[2])
+        if len(p) == 3:  # Direct @custom_layer case
+            p[0] = ('decorated', ('decorator', 'custom_layer', None), p[2])
+        else:  # decorator_list case
+            decorators = p[1] if isinstance(p[1], list) else [p[1]]
+            if not decorators or not isinstance(decorators[0], tuple):
+                decorators = [decorators]
+            p[0] = ('decorated', decorators[0], p[2])
 
     def p_function_def(self, p):
         '''
-        function_def : DEF ID LPAREN parameter_list RPAREN neural_block
-                    | DEF ID LPAREN RPAREN neural_block
-                    | DEF ID LPAREN ID RPAREN neural_block
+        function_def : DEF ID LPAREN parameter_list RPAREN LBRACE statement_list RBRACE
+                    | DEF ID LPAREN RPAREN LBRACE statement_list RBRACE
+                    | DEF ID LPAREN ID RPAREN LBRACE statement_list RBRACE
         '''
-        if len(p) == 7:  # With parameters
+        if len(p) == 9:  # With parameters
             if isinstance(p[4], str):  # Single ID parameter
-                p[0] = ('custom_layer', p[2], [p[4]], p[6])
+                p[0] = ('custom_layer', p[2], [p[4]], p[7])
             else:  # Parameter list
-                p[0] = ('custom_layer', p[2], p[4], p[6])
+                p[0] = ('custom_layer', p[2], p[4], p[7])
         else:  # Without parameters
-            p[0] = ('custom_layer', p[2], [], p[5])
+            p[0] = ('custom_layer', p[2], [], p[6])
 
     def p_branch_def(self, p):
         '''
-        branch_def : BRANCH ID LPAREN parameter_list RPAREN neural_block
-                  | BRANCH ID LPAREN RPAREN neural_block
-                  | BRANCH ID neural_block
+        branch_def : BRANCH ID LPAREN parameter_list RPAREN LBRACE statement_list RBRACE
+                  | BRANCH ID LPAREN RPAREN LBRACE statement_list RBRACE
+                  | BRANCH ID LBRACE statement_list RBRACE
         '''
-        if len(p) == 7:  # With parameters
-            p[0] = ('branch', p[2], p[4], p[6])
-        elif len(p) == 6:  # Empty parameters
-            p[0] = ('branch', p[2], [], p[5])
+        if len(p) == 9:  # With parameters
+            p[0] = ('branch', p[2], p[4], p[7])
+        elif len(p) == 8:  # Empty parameters
+            p[0] = ('branch', p[2], [], p[6])
         else:  # No parameters
-            p[0] = ('branch', p[2], [], p[3])
+            p[0] = ('branch', p[2], [], p[4])
 
     def p_return_stmt(self, p):
         '''
@@ -456,46 +465,121 @@ class NeuroParser:
 
     def p_method_call(self, p):
         '''
-        method_call : ID DOT ID LPAREN parameter_list RPAREN
+        method_call : ID DOT ID LPAREN parameter_list RPAREN SEMI
+                   | ID DOT ID LPAREN RPAREN SEMI
+                   | ID DOT ID LPAREN STRING RPAREN SEMI
+                   | ID DOT ID LPAREN parameter_list RPAREN
                    | ID DOT ID LPAREN RPAREN
+                   | ID DOT ID LPAREN STRING RPAREN
+                   | ID LPAREN parameter_list RPAREN SEMI
+                   | ID LPAREN RPAREN SEMI
                    | ID LPAREN parameter_list RPAREN
                    | ID LPAREN RPAREN
         '''
-        if len(p) == 7:  # object.method(params)
-            p[0] = ('method_call', ('id', p[1]), p[3], p[5])
-        elif len(p) == 6:  # object.method()
-            p[0] = ('method_call', ('id', p[1]), p[3], [])
-        elif len(p) == 5:  # function(params)
-            p[0] = ('method_call', None, p[1], p[3])
-        else:  # function()
-            p[0] = ('method_call', None, p[1], [])
+        if len(p) >= 7 and p[2] == '.':  # object.method cases
+            if isinstance(p[5], str):  # String parameter case
+                p[0] = ('method_call', ('id', p[1]), p[3], [('string', p[5])])
+            else:  # Parameter list case
+                params = p[5] if len(p) > 6 and p[5] else []
+                p[0] = ('method_call', ('id', p[1]), p[3], params)
+        else:  # function call cases
+            if len(p) >= 5:  # With parameters
+                p[0] = ('function_call', p[1], p[3])
+            else:  # No parameters
+                p[0] = ('function_call', p[1], [])
 
     def p_expression(self, p):
         '''
-        expression : NUMBER
-                   | STRING
-                   | TRUE
-                   | FALSE
-                   | NONE
-                   | ID
-                   | method_call
-                   | LPAREN expression RPAREN
-                   | MINUS expression %prec UMINUS
-                   | NOT expression
-                   | expression PLUS expression
-                   | expression MINUS expression
-                   | expression TIMES expression
-                   | expression DIVIDE expression
-                   | expression MODULO expression
-                   | expression POWER expression
-                   | expression AND expression
-                   | expression OR expression
-                   | expression EQUALS_EQUALS expression
-                   | expression NOT_EQUALS expression
-                   | expression LESS_THAN expression
-                   | expression GREATER_THAN expression
-                   | expression LESS_THAN_EQUALS expression
-                   | expression GREATER_THAN_EQUALS expression
+        expression : logical_expr
+        '''
+        p[0] = p[1]
+
+    def p_logical_expr(self, p):
+        '''
+        logical_expr : logical_term
+                    | logical_expr OR logical_term
+        '''
+        if len(p) == 2:
+            p[0] = p[1]
+        else:
+            p[0] = ('binop', 'or', p[1], p[3])
+
+    def p_logical_term(self, p):
+        '''
+        logical_term : logical_factor
+                    | logical_term AND logical_factor
+        '''
+        if len(p) == 2:
+            p[0] = p[1]
+        else:
+            p[0] = ('binop', 'and', p[1], p[3])
+
+    def p_logical_factor(self, p):
+        '''
+        logical_factor : NOT logical_factor
+                      | arithmetic_expr
+                      | comparison_expr
+        '''
+        if len(p) == 2:
+            p[0] = p[1]
+        else:
+            p[0] = ('not', p[2])
+
+    def p_comparison_expr(self, p):
+        '''
+        comparison_expr : arithmetic_expr EQUALS_EQUALS arithmetic_expr
+                       | arithmetic_expr NOT_EQUALS arithmetic_expr
+                       | arithmetic_expr LESS_THAN arithmetic_expr
+                       | arithmetic_expr GREATER_THAN arithmetic_expr
+                       | arithmetic_expr LESS_THAN_EQUALS arithmetic_expr
+                       | arithmetic_expr GREATER_THAN_EQUALS arithmetic_expr
+        '''
+        p[0] = ('binop', p[2], p[1], p[3])
+
+    def p_arithmetic_expr(self, p):
+        '''
+        arithmetic_expr : term
+                       | arithmetic_expr PLUS term
+                       | arithmetic_expr MINUS term
+                       | ID PLUS ID
+                       | ID MINUS ID
+                       | ID TIMES ID
+                       | ID DIVIDE ID
+        '''
+        if len(p) == 2:
+            p[0] = p[1]
+        elif len(p) == 4:
+            if isinstance(p[1], str) and isinstance(p[3], str):
+                p[0] = ('binop', p[2], ('id', p[1]), ('id', p[3]))
+            else:
+                p[0] = ('binop', p[2], p[1], p[3])
+
+    def p_term(self, p):
+        '''
+        term : factor
+             | term TIMES factor
+             | term DIVIDE factor
+             | term MODULO factor
+             | term POWER factor
+        '''
+        if len(p) == 2:
+            p[0] = p[1]
+        else:
+            p[0] = ('binop', p[2], p[1], p[3])
+
+    def p_factor(self, p):
+        '''
+        factor : NUMBER
+               | STRING
+               | TRUE
+               | FALSE
+               | NONE
+               | ID
+               | method_call
+               | LPAREN expression RPAREN
+               | MINUS factor %prec UMINUS
+               | ID LPAREN parameter_list RPAREN
+               | ID LPAREN RPAREN
         '''
         if len(p) == 2:
             if isinstance(p[1], float):
@@ -509,85 +593,21 @@ class NeuroParser:
                     p[0] = ('none', None)
                 else:
                     if p.slice[1].type == 'STRING':
-                        p[0] = ('string', p[1])  # String value already without quotes
+                        p[0] = ('string', p[1])
                     else:
                         p[0] = ('id', p[1])
             else:
-                p[0] = p[1]  # For method_call
+                p[0] = p[1]
         elif len(p) == 3:
-            if p[1] == 'not':
-                p[0] = ('not', p[2])
-            else:  # MINUS expression
-                if p[2][0] == 'number':
+            if p[1] == '-':
+                if isinstance(p[2], tuple) and p[2][0] == 'number':
                     p[0] = ('number', -p[2][1])
                 else:
                     p[0] = ('neg', p[2])
-        elif len(p) == 4:
-            if p[1] == '(':
-                p[0] = p[2]
-            else:
-                p[0] = ('binop', p[2], p[1], p[3])
-        elif len(p) == 5:  # ID LPAREN RPAREN
-            p[0] = ('method_call', ('id', p[1]), [])
-        elif len(p) == 6:  # ID LPAREN parameter_list RPAREN
-            p[0] = ('method_call', ('id', p[1]), p[3])
-        else:  # ID DOT ID LPAREN parameter_list RPAREN
-            p[0] = ('method_call', ('id', p[3]), p[5], ('id', p[1]))
-
-    def p_term(self, p):
-        '''
-        term : factor
-             | MINUS NUMBER
-             | MINUS ID
-             | NOT factor
-        '''
-        if len(p) == 2:
-            p[0] = p[1]
-        elif p[1] == '-':
-            if isinstance(p[2], (int, float)):
-                p[0] = ('number', -p[2])
-            else:
-                p[0] = ('unary_op', p[1], ('id', p[2]))
+        elif len(p) == 5:  # Function call
+            p[0] = ('function_call', p[1], p[3] if p[3] else [])
         else:
-            p[0] = ('unary_op', p[1], p[2])
-
-    def p_factor(self, p):
-        '''
-        factor : NUMBER
-               | STRING
-               | TRUE
-               | FALSE
-               | NONE
-               | ID
-               | LPAREN expression RPAREN
-               | LBRACKET list_items RBRACKET
-               | LBRACKET RBRACKET
-               | method_call
-               | ID DOT ID
-        '''
-        if len(p) == 2:
-            if isinstance(p[1], (int, float)):
-                p[0] = ('number', p[1])
-            elif isinstance(p[1], str):
-                if p[1] == 'True':
-                    p[0] = ('boolean', True)
-                elif p[1] == 'False':
-                    p[0] = ('boolean', False)
-                elif p[1] == 'None':
-                    p[0] = ('none',)
-                elif p[1].startswith('"') or p[1].startswith("'"):
-                    p[0] = ('string', p[1][1:-1])  # Remove quotes
-                else:
-                    p[0] = ('id', p[1])
-        elif len(p) == 4:
-            if p[1] == '(':
-                p[0] = p[2]
-            elif p[1] == '[':
-                p[0] = ('list', p[2])
-            else:
-                p[0] = ('attribute', p[1], p[3])
-        elif len(p) == 3:
-            p[0] = ('list', [])
+            p[0] = p[2]
 
     def p_list_items(self, p):
         '''

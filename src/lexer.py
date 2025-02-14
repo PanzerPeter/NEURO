@@ -3,16 +3,20 @@ from ply import lex
 class NeuroLexer:
     # List of token names
     tokens = [
-        'ID', 'NUMBER', 'PLUS', 'MINUS', 'TIMES', 'DIVIDE',
-        'LPAREN', 'RPAREN', 'LBRACE', 'RBRACE', 'EQUALS',
-        'COMMA', 'DOT', 'STRING', 'AT', 'BRANCH',
-        'DENSE', 'CONV2D', 'MAXPOOL', 'DROPOUT', 'FLATTEN',
-        'NORMALIZE', 'LSTM', 'GRU', 'ATTENTION', 'EMBEDDING',
-        'CUSTOM_LAYER', 'PRETRAINED', 'DEF',
-        'NEURAL_NETWORK', 'LOAD_MATRIX', 'SAVE_MODEL', 'LOAD_MODEL',
-        'LOSS', 'OPTIMIZER', 'PRINT',
-        'COLON', 'LBRACKET', 'RBRACKET', 'SEMI',
-        'RETURN', 'FOR', 'IN', 'RANGE'
+        'ID', 'NUMBER', 'STRING',
+        'PLUS', 'MINUS', 'TIMES', 'DIVIDE', 'MODULO', 'POWER',
+        'EQUALS', 'EQUALS_EQUALS', 'NOT_EQUALS',
+        'LESS_THAN', 'GREATER_THAN', 'LESS_THAN_EQUALS', 'GREATER_THAN_EQUALS',
+        'LPAREN', 'RPAREN', 'LBRACE', 'RBRACE', 'LBRACKET', 'RBRACKET',
+        'COMMA', 'DOT', 'AT', 'SEMI',
+        'AND', 'OR', 'NOT',
+        'NEURAL_NETWORK', 'DENSE', 'CONV2D', 'MAXPOOL', 'DROPOUT',
+        'FLATTEN', 'NORMALIZE', 'LSTM', 'GRU', 'ATTENTION', 'EMBEDDING',
+        'SAVE_MATRIX', 'LOAD_MATRIX', 'SAVE_MODEL', 'LOAD_MODEL',
+        'LOSS', 'OPTIMIZER', 'DEF', 'TRAIN', 'PREDICT', 'EVALUATE',
+        'TRUE', 'FALSE', 'NONE', 'PRINT', 'PRETRAINED', 'CUSTOM_LAYER',
+        'BRANCH', 'RETURN', 'FOR', 'IN', 'RANGE',
+        'UMINUS'
     ]
     
     # Regular expression rules for simple tokens
@@ -20,20 +24,25 @@ class NeuroLexer:
     t_MINUS = r'-'
     t_TIMES = r'\*'
     t_DIVIDE = r'/'
+    t_MODULO = r'%'
+    t_POWER = r'\*\*'
     t_LPAREN = r'\('
     t_RPAREN = r'\)'
     t_LBRACE = r'\{'
     t_RBRACE = r'\}'
     t_EQUALS = r'='
+    t_EQUALS_EQUALS = r'=='
+    t_NOT_EQUALS = r'!='
+    t_LESS_THAN = r'<'
+    t_GREATER_THAN = r'>'
+    t_LESS_THAN_EQUALS = r'<='
+    t_GREATER_THAN_EQUALS = r'>='
     t_COMMA = r','
     t_DOT = r'\.'
     t_AT = r'@'
-    t_COLON = r':'
-    t_LBRACKET = r'\['
-    t_RBRACKET = r'\]'
     t_SEMI = r';'
     
-    # Keywords
+    # Keywords with case-sensitive matching
     keywords = {
         'Dense': 'DENSE',
         'Conv2D': 'CONV2D',
@@ -46,20 +55,21 @@ class NeuroLexer:
         'Attention': 'ATTENTION',
         'Embedding': 'EMBEDDING',
         'Branch': 'BRANCH',
+        'NeuralNetwork': 'NEURAL_NETWORK',
         'custom_layer': 'CUSTOM_LAYER',
         'pretrained': 'PRETRAINED',
         'def': 'DEF',
-        'NeuralNetwork': 'NEURAL_NETWORK',
-        'load_matrix': 'LOAD_MATRIX',
-        'save_model': 'SAVE_MODEL',
-        'load_model': 'LOAD_MODEL',
-        'loss': 'LOSS',
-        'optimizer': 'OPTIMIZER',
-        'print': 'PRINT',
         'return': 'RETURN',
         'for': 'FOR',
         'in': 'IN',
-        'range': 'RANGE'
+        'range': 'RANGE',
+        'True': 'TRUE',
+        'False': 'FALSE',
+        'None': 'NONE',
+        'print': 'PRINT',
+        'and': 'AND',
+        'or': 'OR',
+        'not': 'NOT'
     }
     
     def t_ID(self, t):

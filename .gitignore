@@ -19,6 +19,8 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+pytest.ini
+.pytest_cache/
 
 # Virtual Environment
 venv/
@@ -37,6 +39,7 @@ ENV/
 .pydevproject
 .settings/
 tests/
+
 
 # NEURO specific
 src/parser.out

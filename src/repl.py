@@ -6,12 +6,13 @@ Provides interactive development environment for NEURO.
 import cmd
 import sys
 import torch
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from .interpreter import NeuroInterpreter
 from .errors import NeuroError
 from tabulate import tabulate
 import torch.nn as nn
 import graphviz
+import os
 
 class NeuroREPL(cmd.Cmd):
     intro = 'Welcome to NEURO REPL. Type help or ? to list commands.'
@@ -22,9 +23,207 @@ class NeuroREPL(cmd.Cmd):
         self.interpreter = NeuroInterpreter()
         self.last_result = None
         self.debug_mode = False
-        self.watches = []
+        self.watches = set()
         self.break_conditions = []
         self.profiling = False
+        self.variables = {}  # Store for user-defined variables
+        self.history = []  # Command history
+        self.completions = {
+            'model.': ['train', 'evaluate', 'predict', 'save', 'load'],
+            'Dense': ['units', 'activation', 'input_shape'],
+            'Conv2D': ['filters', 'kernel_size', 'strides', 'padding'],
+            'LSTM': ['units', 'return_sequences', 'activation'],
+            'optimizer.': ['learning_rate', 'momentum', 'decay'],
+            'loss.': ['categorical_crossentropy', 'binary_crossentropy', 'mse']
+        }
+
+    def get_completions(self, text: str) -> List[str]:
+        """Get code completions for the given text."""
+        if '.' in text:
+            obj, _ = text.split('.')
+            return self.completions.get(obj + '.', [])
+        return [k[:-1] for k in self.completions.keys() if k.startswith(text)]
+
+    def add_to_history(self, cmd: str) -> None:
+        """Add a command to history."""
+        if cmd.strip():
+            self.history.append(cmd)
+
+    def handle_input(self, code: str) -> Any:
+        """
+        Handle multi-line input and code execution.
+        
+        Args:
+            code: The code to execute
+            
+        Returns:
+            The result of execution
+        """
+        try:
+            self.add_to_history(code)
+            # Store result in variables if it's an assignment
+            if '=' in code and not code.strip().startswith('if') and not code.strip().startswith('for'):
+                var_name = code.split('=')[0].strip()
+                result = self.interpreter.interpret(code)
+                self.variables[var_name] = result
+                if isinstance(result, nn.Module):
+                    print("Model created successfully")
+                return result
+            else:
+                result = self.interpreter.interpret(code)
+                if result is not None:
+                    print(result)
+                return result
+        except NeuroError as e:
+            print(f"Error:\n{str(e)}")
+            return None
+        except Exception as e:
+            print(f"Unexpected error: {str(e)}")
+            if self.debug_mode:
+                import traceback
+                traceback.print_exc()
+            return None
+
+    def handle_command(self, cmd: str) -> None:
+        """
+        Handle REPL commands.
+        
+        Args:
+            cmd: The command to execute
+        """
+        cmd = cmd.strip()
+        if cmd == 'help':
+            self.print_help()
+            return
+        elif cmd == 'clear':
+            self.clear()
+            self.variables.clear()
+            return
+        elif cmd == 'reset':
+            self.__init__()
+            print("Environment reset")
+            return
+        elif cmd == 'vars':
+            self.print_variables()
+            return
+        elif cmd.startswith('help '):
+            self.print_topic_help(cmd[5:])
+            return
+        elif cmd == 'debug':
+            self.debug_mode = not self.debug_mode
+            print(f"Debug mode {'enabled' if self.debug_mode else 'disabled'}")
+            return
+        elif cmd.startswith('watch '):
+            var = cmd[6:].strip()
+            self.watches.add(var)
+            print(f"Watching variable: {var}")
+            return
+        elif cmd == 'profile':
+            self.profiling = not self.profiling
+            print(f"Profiling {'enabled' if self.profiling else 'disabled'}")
+            return
+        elif cmd.startswith('summary'):
+            parts = cmd.split()
+            model_name = parts[1] if len(parts) > 1 else None
+            self.do_summary(model_name)
+            return
+        
+        print(f"Unknown command: {cmd}")
+
+    def print_help(self) -> None:
+        """Print general help information."""
+        help_text = """
+Available commands:
+------------------
+help          : Show this help message
+help <topic>  : Show help for a specific topic
+clear         : Clear the screen and reset environment
+vars          : List all variables
+reset         : Reset the environment
+exit          : Exit the REPL
+
+Code Execution:
+--------------
+- Type NEURO code directly to execute
+- Multi-line code blocks are supported
+- Use '=' for assignment
+- Access previous results with '_'
+
+Debugging:
+---------
+debug        : Toggle debug mode
+watch        : Add variables to watch
+profile     : Toggle profiling
+"""
+        print(help_text)
+
+    def print_variables(self) -> None:
+        """Print all defined variables."""
+        if not self.variables:
+            print("No variables defined")
+            return
+        
+        rows = []
+        for name, value in self.variables.items():
+            type_name = type(value).__name__
+            if isinstance(value, (int, float, str, bool)):
+                summary = str(value)
+            else:
+                summary = str(type(value))
+            rows.append([name, type_name, summary])
+        
+        print(tabulate(rows, headers=['Name', 'Type', 'Value'], tablefmt='grid'))
+
+    def print_topic_help(self, topic: str) -> None:
+        """
+        Print help for a specific topic.
+        
+        Args:
+            topic: The topic to get help for
+        """
+        topics = {
+            'Dense': """
+Dense:
+Dense layer for fully connected neural networks
+
+Parameters:
+- units: Number of output units
+- activation: Activation function (relu, sigmoid, tanh)
+- input_size: Size of input (optional)
+""",
+            'Conv2D': """
+Conv2D:
+2D Convolutional layer
+
+Parameters:
+- filters: Number of output filters
+- kernel_size: Size of convolution kernel
+- stride: Stride of convolution
+- padding: Padding type
+""",
+            'custom_layer': """
+Custom Layer:
+Define custom neural network layers
+
+Usage:
+@custom_layer
+def LayerName(x) {
+    // Layer implementation
+}
+"""
+        }
+        
+        if topic in topics:
+            print(topics[topic])
+        else:
+            print(f"No help available for: {topic}")
+
+    def clear(self) -> None:
+        """Clear the screen."""
+        if sys.platform == 'win32':
+            os.system('cls')
+        else:
+            os.system('clear')
 
     def default(self, line: str) -> bool:
         """Handle NEURO code execution."""
@@ -148,8 +347,8 @@ class NeuroREPL(cmd.Cmd):
             
             rows.append([name, layer.__class__.__name__, output_shape, params])
 
-        headers = ["Layer", "Type", "Output Shape", "Param #"]
-        summary = tabulate(rows, headers=headers, tablefmt="grid")
+        summary = "Model Summary\n" + "=" * 50 + "\n"
+        summary += tabulate(rows, headers=["Layer", "Type", "Output Shape", "Param #"], tablefmt="grid")
         summary += f"\nTotal parameters: {total_params:,}"
         return summary
 
@@ -179,6 +378,35 @@ class NeuroREPL(cmd.Cmd):
         
         build_graph(model)
         return dot
+
+    def _print_watched_vars(self) -> None:
+        """Print watched variables."""
+        for var in self.watches:
+            if var in self.variables:
+                print(f"{var} = {self.variables[var]}")
+
+    def run(self) -> None:
+        """Run the REPL."""
+        print("NEURO REPL v1.0")
+        print('Type "help" for more information.')
+        
+        while True:
+            try:
+                code = input(">>> ")
+                if code.strip() == "exit":
+                    break
+                elif code.startswith(":"):
+                    self.handle_command(code[1:].strip())
+                else:
+                    result = self.handle_input(code)
+                    if result is not None:
+                        print(result)
+            except KeyboardInterrupt:
+                print("\nKeyboardInterrupt")
+            except EOFError:
+                break
+        
+        print("\nGoodbye!")
 
 def main():
     """Start the NEURO REPL."""
