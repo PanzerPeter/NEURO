@@ -83,24 +83,22 @@ class NeuroLexer:
         return t
         
     def t_STRING(self, t):
-        r'\"[^\"]*\"|\'[^\']*\''
+        r'\"([^\"\\]|\\.)*\"|\'([^\'\\]|\\.)*\''
         t.value = t.value[1:-1]  # Remove quotes
         return t
         
-    # Track line numbers
+    def t_COMMENT(self, t):
+        r'\#[^\n]*'  # Match comments starting with # until end of line
+        pass  # Discard comments
+        
     def t_newline(self, t):
         r'\n+'
         t.lexer.lineno += len(t.value)
         
-    # Ignored characters (spaces and tabs)
-    t_ignore = ' \t'
+    t_ignore = ' \t'  # Ignore spaces and tabs
     
-    def t_COMMENT(self, t):
-        r'\#.*'
-        pass  # No return value. Token is discarded
-        
     def t_error(self, t):
-        print(f"Illegal character '{t.value[0]}' at line {t.lineno}")
+        print(f"Illegal character '{t.value[0]}' at line {t.lexer.lineno}")
         t.lexer.skip(1)
         
     def build(self, **kwargs):

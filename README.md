@@ -80,6 +80,7 @@ NEURO/
 │   └── neuro.py         # Main entry point
 ├── examples/            # Example NEURO programs
 ├── docs/               # Documentation
+├── LICENSE              # License
 └── requirements.txt    # Project dependencies
 ```
 
@@ -134,7 +135,7 @@ When using this software, you must:
 - State significant changes made to the software
 - Make source code available when distributing
 - Include the following attribution in documentation or about section:
-  "Based on NEURO (https://github.com/yourusername/NEURO)"
+  "Based on NEURO (https://github.com/PanzerPeter/NEURO)"
 
 ## Acknowledgments
 

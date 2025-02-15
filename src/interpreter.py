@@ -593,6 +593,8 @@ class NeuroInterpreter:
                 return self.execute_return(ast[1])
             elif node_type == 'for':
                 return self.execute_for_loop(ast[1], ast[2], ast[3])
+            elif node_type == 'function_call':
+                return self.execute_function_call(ast[1], ast[2])
             else:
                 raise ValueError(f"Unknown node type: {node_type}")
         
@@ -628,15 +630,30 @@ class NeuroInterpreter:
             for param in params:
                 if param[0] == 'named_param':
                     if param[1] == 'input_size':
-                        input_size = float(self.execute_ast(param[2]))
+                        input_size = self.execute_ast(param[2])
                     elif param[1] == 'output_size':
-                        output_size = float(self.execute_ast(param[2]))
+                        output_size = self.execute_ast(param[2])
             
             if input_size is None or output_size is None:
                 raise ValidationError(
                     "Missing required parameters: input_size and output_size",
                     context=get_context(),
                     suggestions=["Specify both input_size and output_size"]
+                )
+            
+            # Convert to integers and validate
+            try:
+                input_size = int(input_size)
+                output_size = int(output_size)
+            except (TypeError, ValueError):
+                raise ValidationError(
+                    "Input and output sizes must be integers",
+                    context=get_context(),
+                    suggestions=["Use integer values for dimensions"],
+                    details={
+                        "input_size": input_size,
+                        "output_size": output_size
+                    }
                 )
             
             if input_size <= 0 or output_size <= 0:
@@ -969,6 +986,9 @@ class NeuroInterpreter:
             elif param[0] == 'named_param':
                 # Handle named parameters
                 param_dict[param[1]] = self.execute_ast(param[2])
+            elif param[0] == 'string':
+                # Handle string parameters
+                param_dict['positional'].append(param[1])
         
         if method_name == 'train':
             # Get training parameters with defaults
@@ -1090,7 +1110,7 @@ class NeuroInterpreter:
             return obj
         
         elif method_name == 'evaluate':
-            data = param_dict['positional'][0] if 'positional' in param_dict else None
+            data = param_dict['positional'][0] if param_dict['positional'] else None
             beam_size = int(param_dict.get('beam_size', 1))
             
             if not isinstance(data, NeuroMatrix):
@@ -1104,6 +1124,37 @@ class NeuroInterpreter:
             obj.clip_gradients(max_norm)
             return obj
         
+        elif method_name == 'save':
+            # Handle save method
+            if not param_dict['positional']:
+                raise ValidationError(
+                    "Save method requires a filename parameter",
+                    context=get_context(),
+                    suggestions=["Provide a filename to save the model"]
+                )
+            filename = param_dict['positional'][0]
+            format = param_dict.get('format', 'pt')
+            
+            try:
+                if format == 'torchscript':
+                    # Save as TorchScript
+                    scripted_model = torch.jit.script(obj)
+                    scripted_model.save(filename)
+                else:
+                    # Save model state dict
+                    torch.save(obj.state_dict(), filename)
+                return None
+            except Exception as e:
+                raise ValidationError(
+                    f"Error saving model: {str(e)}",
+                    context=get_context(),
+                    suggestions=[
+                        "Check write permissions for the target directory",
+                        "Ensure sufficient disk space",
+                        "Verify the path is valid"
+                    ]
+                )
+        
         else:
             raise ValueError(f"Unknown method: {method_name}")
 
@@ -1112,20 +1163,74 @@ class NeuroInterpreter:
         self.variables[var_name] = result
         return result
 
-    def execute_binop(self, op, left, right):
+    def execute_binop(self, op: str, left: Any, right: Any) -> Any:
+        """Execute a binary operation."""
+        # Evaluate operands
         left_val = self.execute_ast(left)
         right_val = self.execute_ast(right)
-        
-        if op == 'PLUS':
-            return left_val + right_val
-        elif op == 'MINUS':
-            return left_val - right_val
-        elif op == 'TIMES':
-            return left_val * right_val
-        elif op == 'DIVIDE':
-            return left_val / right_val
-        else:
-            raise ValueError(f"Unknown operator: {op}")
+
+        # Handle arithmetic operations
+        if op in ['+', '-', '*', '/', '%', '**']:
+            if isinstance(left_val, (int, float)) and isinstance(right_val, (int, float)):
+                if op == '+':
+                    return left_val + right_val
+                elif op == '-':
+                    return left_val - right_val
+                elif op == '*':
+                    return left_val * right_val
+                elif op == '/':
+                    if right_val == 0:
+                        raise NeuroError(
+                            "Division by zero",
+                            context=get_context(),
+                            suggestions=["Check your arithmetic expressions"]
+                        )
+                    return left_val / right_val
+                elif op == '%':
+                    return left_val % right_val
+                elif op == '**':
+                    return left_val ** right_val
+            else:
+                raise NeuroError(
+                    f"Invalid operands for {op}: {type(left_val)} and {type(right_val)}",
+                    context=get_context(),
+                    suggestions=[
+                        "Ensure operands are numbers",
+                        "Check variable types"
+                    ]
+                )
+
+        # Handle comparison operations
+        elif op in ['==', '!=', '<', '>', '<=', '>=']:
+            if op == '==':
+                return left_val == right_val
+            elif op == '!=':
+                return left_val != right_val
+            elif op == '<':
+                return left_val < right_val
+            elif op == '>':
+                return left_val > right_val
+            elif op == '<=':
+                return left_val <= right_val
+            elif op == '>=':
+                return left_val >= right_val
+
+        # Handle logical operations
+        elif op in ['and', 'or']:
+            if op == 'and':
+                return left_val and right_val
+            elif op == 'or':
+                return left_val or right_val
+
+        raise NeuroError(
+            f"Unknown operator: {op}",
+            context=get_context(),
+            suggestions=[
+                "Check model architecture",
+                "Verify layer configurations",
+                "Ensure data types are compatible"
+            ]
+        )
 
     def execute_print(self, expr):
         value = self.execute_ast(expr)
@@ -1418,12 +1523,27 @@ class NeuroInterpreter:
         """Execute a model branch definition."""
         return self.create_branch(name, lambda: self.execute_ast(body))
 
-    def execute_unary_op(self, op: str, operand: tuple) -> Any:
+    def execute_unary_op(self, op: str, operand: Any) -> Any:
         """Execute a unary operation."""
-        value = self.execute_ast(operand)
+        val = self.execute_ast(operand)
+
         if op == '-':
-            return -value
-        raise ValueError(f"Unknown unary operator: {op}")
+            if isinstance(val, (int, float)):
+                return -val
+            else:
+                raise NeuroError(
+                    f"Invalid operand for unary minus: {type(val)}",
+                    context=get_context(),
+                    suggestions=["Ensure operand is a number"]
+                )
+        elif op == 'not':
+            return not val
+
+        raise NeuroError(
+            f"Unknown unary operator: {op}",
+            context=get_context(),
+            suggestions=["Check operator syntax"]
+        )
 
     def execute_return(self, value: tuple) -> Any:
         """Execute a return statement."""
@@ -1436,6 +1556,25 @@ class NeuroInterpreter:
             self.variables[var_name] = i
             for stmt in body:
                 self.execute_ast(stmt)
+
+    def execute_function_call(self, function_name: str, params: list) -> Any:
+        """Execute a function call with the given parameters."""
+        if function_name == 'loss':
+            return self.create_loss(params)
+        elif function_name == 'optimizer':
+            return self.create_optimizer(params)
+        elif function_name == 'load_model':
+            return self.execute_load_model(params)
+        else:
+            raise NeuroError(
+                f"Unknown function: {function_name}",
+                context=get_context(),
+                suggestions=[
+                    "Check function name spelling",
+                    "Verify function is defined",
+                    "Ensure function is imported"
+                ]
+            )
 
     def load_pretrained_model(self, model_name: tuple, statement: tuple) -> Any:
         """
