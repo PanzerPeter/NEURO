@@ -1,20 +1,18 @@
+"""
+NEURO Language Dependencies
+
+This file lists all the Python package dependencies required by NEURO.
+Versions will be specified for stability.
+"""
+
 # Core dependencies
 torch>=2.0.0
-numpy>=1.24.0
+numpy>=1.21.0
 ply>=3.11
-pyyaml>=6.0
+click>=8.0.0
 
-# Data processing and visualization
-pandas>=2.0.0
-matplotlib>=3.7.1
-tqdm>=4.65.0
-
-# Development and testing
-pytest>=7.3.1
-pytest-cov>=4.1.0
-black>=23.3.0
-flake8>=6.0.0
-isort>=5.12.0
-
-# IDE and tooling support
-pygments>=2.15.0  # For syntax highlighting 
+# Development dependencies
+pytest>=7.0.0
+black>=22.0.0
+flake8>=4.0.0
+mypy>=1.0.0 

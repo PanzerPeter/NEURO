@@ -1,133 +1,144 @@
 """
-NEURO Error Handling Module
-Provides custom error classes and utilities for better error reporting and debugging.
+NEURO Error Handling
+
+This module defines the error handling system for the NEURO language.
+It provides detailed error messages and debugging information.
+
+Key responsibilities:
+- Define custom exception classes
+- Implement error reporting system
+- Track source locations for errors
+- Provide helpful error messages
+- Handle runtime and compile-time errors
+- Support for debugging information
+- Stack trace management
+
+This module is crucial for developer experience and debugging.
 """
 
-import inspect
-import traceback
-from typing import Optional, List, Dict, Any
-from dataclasses import dataclass
-
-@dataclass
-class CodeContext:
-    """Contains contextual information about where an error occurred."""
-    line_no: int
-    code_snippet: str
-    function_name: Optional[str] = None
-    file_name: Optional[str] = None
+from typing import Optional, Any, Tuple
 
 class NeuroError(Exception):
-    """Base class for all NEURO-specific errors."""
-    
-    def __init__(
-        self,
-        message: str,
-        context: Optional[CodeContext] = None,
-        suggestions: Optional[List[str]] = None,
-        details: Optional[Dict[str, Any]] = None
-    ):
+    """Base class for all NEURO language errors."""
+    def __init__(self, message: str, line: Optional[int] = None, column: Optional[int] = None,
+                 context: Optional[str] = None, source_line: Optional[str] = None, 
+                 details: Optional[str] = None, token_length: Optional[int] = None):
         self.message = message
+        self.line = line
+        self.column = column
         self.context = context
-        self.suggestions = suggestions or []
-        self.details = details or {}
-        
-        # Build the full error message
-        full_message = self._build_error_message()
-        super().__init__(full_message)
-    
-    def _build_error_message(self) -> str:
-        """Builds a detailed error message with context and suggestions."""
-        parts = [f"\n{'='*80}\nNEURO Error: {self.message}\n{'='*80}\n"]
-        
+        self.source_line = source_line
+        self.details = details
+        self.token_length = token_length
+        super().__init__(self._format_message())
+
+    def _format_message(self) -> str:
+        """Format the error message with available context."""
+        parts = [self.message]
         if self.context:
-            parts.append(f"\nLocation:")
-            if self.context.file_name:
-                parts.append(f"  File: {self.context.file_name}")
-            if self.context.function_name:
-                parts.append(f"  Function: {self.context.function_name}")
-            parts.append(f"  Line {self.context.line_no}:")
-            parts.append(f"\nCode:")
-            parts.append(f"  {self.context.code_snippet}")
-        
+            parts.append(f" ({self.context})")
+        if self.line is not None:
+            parts.append(f" at line {self.line}")
+            if self.column is not None:
+                parts.append(f", column {self.column}")
+        if self.source_line:
+            parts.append(f"\n{self.source_line}")
+            if self.column is not None and self.token_length:
+                parts.append("\n" + " " * self.column + "^" * self.token_length)
         if self.details:
-            parts.append("\nDetails:")
-            for key, value in self.details.items():
-                parts.append(f"  {key}: {value}")
-        
-        if self.suggestions:
-            parts.append("\nSuggestions:")
-            for suggestion in self.suggestions:
-                parts.append(f"  • {suggestion}")
-        
-        return "\n".join(parts)
+            parts.append(f"\nDetails: {self.details}")
+        return "".join(parts)
 
-class MemoryError(NeuroError):
-    """Raised when memory-related issues occur."""
+class NeuroSyntaxError(NeuroError):
+    """Error raised for syntax errors."""
     pass
 
-class GradientError(NeuroError):
-    """Raised when gradient-related issues occur."""
+class NeuroRuntimeError(NeuroError):
+    """Error raised for runtime errors."""
     pass
 
-class ValidationError(NeuroError):
-    """Raised when validation of models or data fails."""
-    pass
+class NeuroNameError(NeuroError):
+    """Error raised for undefined names."""
+    def __init__(self, name: str, message: Optional[str] = None, **kwargs):
+        self.name = name
+        # Include the name in the message if not already included
+        if message and name not in message:
+            message_text = f"{message} '{name}'"
+        else:
+            message_text = message or f"Variable '{name}' is not defined"
+        super().__init__(message_text, **kwargs)
 
-class ConfigurationError(NeuroError):
-    """Raised when there are issues with model or training configuration."""
-    pass
+class NeuroTypeError(NeuroError):
+    """Error raised for type errors."""
+    def __init__(self, message: str, expected_type: Optional[str] = None, 
+                 actual_type: Optional[str] = None, **kwargs):
+        details = None
+        if expected_type and actual_type:
+            details = f"Expected type: {expected_type}, got: {actual_type}"
+        super().__init__(message, details=details, **kwargs)
 
-def get_context(frames_back: int = 1) -> CodeContext:
-    """
-    Extracts context information from the current call stack.
-    
-    Args:
-        frames_back: How many frames to go back in the stack to find context
-    
-    Returns:
-        CodeContext object containing error location information
-    """
-    frame = inspect.currentframe()
-    try:
-        for _ in range(frames_back + 1):
-            if frame.f_back is None:
-                break
-            frame = frame.f_back
-            
-        if frame is None:
-            return None
-            
-        filename = frame.f_code.co_filename
-        function = frame.f_code.co_name
-        lineno = frame.f_lineno
-        
-        # Get the code snippet
-        lines, _ = inspect.findsource(frame)
-        start = max(0, lineno - 2)
-        end = min(len(lines), lineno + 3)
-        snippet = ''.join(lines[start:end])
-        
-        return CodeContext(
-            line_no=lineno,
-            code_snippet=snippet.strip(),
-            function_name=function,
-            file_name=filename
+class NeuroValueError(NeuroError):
+    """Error raised for invalid values."""
+    def __init__(self, message: str, value: Optional[Any] = None, **kwargs):
+        # Check if details is already provided in kwargs
+        if value is not None and 'details' not in kwargs:
+            kwargs['details'] = f"Invalid value: {value}"
+        super().__init__(message, **kwargs)
+
+class NeuroShapeError(NeuroError):
+    """Error raised for tensor shape mismatches."""
+    def __init__(self, message: str, expected_shape: Tuple[int, ...], 
+                 actual_shape: Tuple[int, ...], **kwargs):
+        # Format the details to match test expectations
+        details = f"expected {expected_shape}, got {actual_shape}"
+        super().__init__(message, details=details, **kwargs)
+
+class NeuroLayerError(NeuroError):
+    """Error raised for layer-related errors."""
+    def __init__(self, message: str, layer_type: Optional[str] = None, **kwargs):
+        details = f"In layer type: {layer_type}" if layer_type else None
+        super().__init__(message, details=details, **kwargs)
+
+class NeuroAttributeError(NeuroError):
+    """Error raised for attribute errors."""
+    def __init__(self, obj: str, attr: str, **kwargs):
+        super().__init__(
+            f"Object '{obj}' has no attribute '{attr}'",
+            **kwargs
         )
-    finally:
-        del frame  # Avoid reference cycles
 
-def format_memory_size(size_bytes: int) -> str:
-    """
-    Formats a memory size in bytes to a human-readable string.
+class NeuroImportError(NeuroError):
+    """Raised when an import fails."""
+    def __init__(self, message: str, line: Optional[int] = None, column: Optional[int] = None, module: Optional[str] = None):
+        super().__init__(message, line, column)
+        self.module = module
+
+def format_error_location(code: str, line: int, column: int, context_lines: int = 2) -> str:
+    """Format error location with context lines and pointer."""
+    lines = code.split('\n')
+    start = max(0, line - context_lines - 1)
+    end = min(len(lines), line + context_lines)
     
-    Args:
-        size_bytes: Size in bytes
-        
-    Returns:
-        Formatted string (e.g., "1.23 GB")
-    """
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-        if size_bytes < 1024:
-            return f"{size_bytes:.2f} {unit}"
-        size_bytes /= 1024
-    return f"{size_bytes:.2f} PB" 
+    # Build the error message with line numbers and context
+    result = []
+    for i in range(start, end):
+        line_num = i + 1
+        if line_num == line:
+            # Add the error line with pointer
+            result.append(f"{line_num:4d} | {lines[i]}")
+            result.append("     | " + " " * (column - 1) + "^")
+        else:
+            result.append(f"{line_num:4d} | {lines[i]}")
+    
+    return "\n".join(result)
+
+def create_error_message(error: NeuroError, code: Optional[str] = None) -> str:
+    """Create a detailed error message with context if code is provided."""
+    message = str(error)
+    
+    if code and error.line is not None and error.column is not None:
+        message += "\n\n" + format_error_location(
+            code, error.line, error.column
+        )
+    
+    return message 

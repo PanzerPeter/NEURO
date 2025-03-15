@@ -1,43 +1,30 @@
+"""
+NEURO Language Setup Configuration
+
+This file contains the package setup configuration for NEURO.
+It defines how the package should be installed and its metadata.
+"""
+
 from setuptools import setup, find_packages
 
 setup(
     name="neuro-lang",
-    version="0.1.0-alpha",
+    version="0.1.0",
+    description="A domain-specific language for neural network development",
+    author="NEURO Team",
     packages=find_packages(),
     install_requires=[
-        "ply>=3.11",
-        "numpy>=1.24.0",
-        "torch>=2.0.0",
-        "pytest>=7.3.1",
-        "pyyaml>=6.0",
-        "matplotlib>=3.7.1",
-        "tqdm>=4.65.0",
-        "pandas>=2.0.0",
-        "pygments>=2.15.0",
+        # Dependencies will be read from requirements.txt
     ],
     entry_points={
         'console_scripts': [
             'neuro=src.neuro:main',
         ],
     },
-    author="NEURO Development Team",
-    description="NEURO Programming Language - A language designed for AI development (ALPHA VERSION)",
-    long_description=open("README.md").read(),
-    long_description_content_type="text/markdown",
-    keywords="ai, machine learning, programming language, alpha, experimental",
     classifiers=[
-        "Development Status :: 2 - Pre-Alpha",
+        "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
         "Topic :: Software Development :: Compilers",
-        "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
-        "Operating System :: OS Independent",
-        "Natural Language :: English",
+        "Programming Language :: Python :: 3.8",
     ],
-    python_requires=">=3.7",
-    project_urls={
-        "Homepage": "https://github.com/PanzerPeter/NEURO",
-        "Bug Tracker": "https://github.com/PanzerPeter/NEURO/issues",
-        "Documentation": "https://github.com/PanzerPeter/NEURO#readme",
-    },
 ) 

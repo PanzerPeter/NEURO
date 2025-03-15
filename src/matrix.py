@@ -1,509 +1,311 @@
-import yaml
+"""
+NEURO Matrix Implementation
+
+This module implements the NeuroMatrix format (.nrm) for NEURO.
+It provides functionality for handling AI datasets and model configurations.
+
+Key responsibilities:
+- Define NeuroMatrix data structure
+- Load and save .nrm files
+- Data validation and preprocessing
+- Memory-efficient data handling
+- Integration with PyTorch tensors
+- Support for common data operations
+- Dataset splitting and batching
+
+This module is crucial for data handling in NEURO.
+"""
+
+import json
 import torch
 import numpy as np
-from torch.utils.data import Dataset, DataLoader, TensorDataset
-import json
-from torch.nn.utils.rnn import pad_sequence
-from typing import Dict, List, Any, Tuple, Optional
-from .errors import ValidationError, get_context
-import time
-import math
+from typing import Dict, List, Tuple, Union, Any, Optional, Iterator
+from datetime import datetime
+from .errors import NeuroValueError, NeuroShapeError
+import pickle
 
-class NeuroMatrix(Dataset):
-    """
-    Custom dataset class for NEURO data format.
-    Supports both training data and model weights.
-    """
+class NeuroMatrix:
+    """Matrix data structure for NEURO language."""
     
-    def __init__(self, data: List[Dict[str, Any]], meta: Optional[Dict[str, Any]] = None):
-        """Initialize NeuroMatrix with data and metadata."""
-        if not isinstance(data, list):
-            raise ValidationError(
-                "Data must be a list",
-                context=get_context(),
-                suggestions=["Provide data as a list of dictionaries"]
-            )
-        self.data = data
-        self.meta = meta or {}
-        self.model_config = {
-            'input_size': None,
-            'output_size': None,
-            'batch_size': 32
-        }
-        self._validate_data()
-        self._prepare_tensors()
+    def __init__(self):
+        """Initialize an empty matrix."""
+        self._inputs = None
+        self._outputs = None
+        self._normalized = False
+        self._input_shape = None
+        self._output_shape = None
+        self._num_samples = 0
+        self._metadata = {}
     
-    @classmethod
-    def from_dict(cls, data_dict: Dict[str, Any]) -> 'NeuroMatrix':
-        """
-        Creates a NeuroMatrix from a dictionary representation.
+    @property
+    def inputs(self):
+        """Get input data."""
+        return self._inputs
+    
+    @property
+    def outputs(self):
+        """Get output data."""
+        return self._outputs
+    
+    @property
+    def input_shape(self):
+        """Get input shape."""
+        return self._input_shape
+    
+    @property
+    def output_shape(self):
+        """Get output shape."""
+        return self._output_shape
+    
+    @property
+    def num_samples(self):
+        """Get number of samples."""
+        return self._num_samples
+    
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        """Get matrix metadata."""
+        return self._metadata
+    
+    @metadata.setter
+    def metadata(self, value: Dict[str, Any]) -> None:
+        """Set matrix metadata.
         
         Args:
-            data_dict: Dictionary containing data and metadata
+            value: Dictionary of metadata
+        """
+        if not isinstance(value, dict):
+            raise TypeError("Metadata must be a dictionary")
+        self._metadata = value.copy()
+    
+    def add_data(self, inputs: np.ndarray, outputs: np.ndarray) -> None:
+        """Add data to the matrix.
+        
+        Args:
+            inputs: Input data array
+            outputs: Output data array
+            
+        Raises:
+            NeuroShapeError: If input and output shapes are incompatible
+            NeuroValueError: If data contains invalid values
+        """
+        # Validate input types
+        if not isinstance(inputs, np.ndarray) or not isinstance(outputs, np.ndarray):
+            raise NeuroValueError("Inputs and outputs must be numpy arrays")
+
+        # Validate shapes
+        if len(inputs) != len(outputs):
+            raise NeuroShapeError(
+                "Number of input and output samples must match",
+                expected_shape=(len(inputs),),
+                actual_shape=(len(outputs),)
+            )
+
+        # Initialize or append data
+        if self._inputs is None:
+            self._inputs = inputs
+            self._outputs = outputs
+        else:
+            if inputs.shape[1:] != self._inputs.shape[1:]:
+                raise NeuroShapeError(
+                    "Input shape mismatch",
+                    expected_shape=self._inputs.shape[1:],
+                    actual_shape=inputs.shape[1:]
+                )
+            if outputs.shape[1:] != self._outputs.shape[1:]:
+                raise NeuroShapeError(
+                    "Output shape mismatch",
+                    expected_shape=self._outputs.shape[1:],
+                    actual_shape=outputs.shape[1:]
+                )
+            self._inputs = np.vstack([self._inputs, inputs])
+            self._outputs = np.vstack([self._outputs, outputs])
+
+        self._input_shape = self._inputs.shape[1:]
+        self._output_shape = self._outputs.shape[1:]
+        self._num_samples = len(self._inputs)
+        self._normalized = False
+    
+    def normalize(self) -> None:
+        """Normalize input data."""
+        if not self._normalized and self._inputs is not None:
+            self._inputs = (self._inputs - np.mean(self._inputs, axis=0)) / np.std(self._inputs, axis=0)
+            self._normalized = True
+    
+    def shuffle(self) -> None:
+        """Randomly shuffle the data."""
+        if self._num_samples == 0:
+            return
+
+        indices = np.random.permutation(self._num_samples)
+        self._inputs = self._inputs[indices]
+        self._outputs = self._outputs[indices]
+    
+    def to_torch(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Convert data to PyTorch tensors.
+        
+        Returns:
+            Tuple of (input_tensor, output_tensor)
+        """
+        if self._inputs is None or self._outputs is None:
+            raise ValueError("No data available to convert")
+
+        return (
+            torch.from_numpy(self._inputs.astype(np.float32)),
+            torch.from_numpy(self._outputs.astype(np.float32))
+        )
+    
+    def create_dataloader(self, batch_size: int = 32) -> torch.utils.data.DataLoader:
+        """Create a PyTorch DataLoader.
+        
+        Args:
+            batch_size: Size of each batch
             
         Returns:
-            A new NeuroMatrix instance
+            DataLoader instance
         """
-        if not isinstance(data_dict, dict):
-            raise ValidationError(
-                "Invalid data format",
-                context=get_context(),
-                suggestions=["Data should be a dictionary with 'meta' and 'data' keys"],
-                details={"provided_type": type(data_dict).__name__}
-            )
-            
-        meta = data_dict.get('meta', {})
-        data = data_dict.get('data', [])
+        inputs, outputs = self.to_torch()
+        dataset = torch.utils.data.TensorDataset(inputs, outputs)
+        return torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    
+    def train_test_split(self, test_size: float = 0.2) -> Tuple['NeuroMatrix', 'NeuroMatrix']:
+        """Split data into training and test sets."""
+        if self._inputs is None or self._outputs is None:
+            raise NeuroValueError("No data to split")
         
-        if not isinstance(data, list):
-            raise ValidationError(
-                "Invalid data format",
-                context=get_context(),
-                suggestions=["Data should be a list of input-output pairs"],
-                details={"provided_type": type(data).__name__}
-            )
+        # Create indices
+        indices = np.random.permutation(self._num_samples)
+        test_samples = int(self._num_samples * test_size)
+        test_idx = indices[:test_samples]
+        train_idx = indices[test_samples:]
+        
+        # Create new matrices
+        train_matrix = NeuroMatrix()
+        test_matrix = NeuroMatrix()
+        
+        # Split data
+        train_matrix.add_data(self._inputs[train_idx], self._outputs[train_idx])
+        test_matrix.add_data(self._inputs[test_idx], self._outputs[test_idx])
+        
+        return train_matrix, test_matrix
+    
+    def train_val_test_split(
+        self,
+        val_size: float = 0.2,
+        test_size: float = 0.2,
+        shuffle: bool = True
+    ) -> Tuple['NeuroMatrix', 'NeuroMatrix', 'NeuroMatrix']:
+        """Split data into training, validation and test sets.
+        
+        Args:
+            val_size: Fraction of data for validation
+            test_size: Fraction of data for testing
+            shuffle: Whether to shuffle before splitting
             
-        return cls(data, meta)
+        Returns:
+            Tuple of (train_data, val_data, test_data)
+        """
+        if shuffle:
+            self.shuffle()
+
+        # Calculate split indices
+        # For 100 samples with val_size=0.2, test_size=0.2:
+        # - Train should be 60 samples (60%)
+        # - Val should be 20 samples (20%)
+        # - Test should be 20 samples (20%)
+        train_size = 1.0 - val_size - test_size
+        train_end = int(self._num_samples * train_size)
+        val_end = train_end + int(self._num_samples * val_size)
+
+        train_data = NeuroMatrix()
+        val_data = NeuroMatrix()
+        test_data = NeuroMatrix()
+
+        # Split the data
+        train_data.add_data(self._inputs[:train_end], self._outputs[:train_end])
+        val_data.add_data(self._inputs[train_end:val_end], self._outputs[train_end:val_end])
+        test_data.add_data(self._inputs[val_end:], self._outputs[val_end:])
+
+        return train_data, val_data, test_data
+    
+    def save(self, filepath: str) -> None:
+        """Save matrix data to file.
+        
+        Args:
+            filepath: Path to save file
+        """
+        data = {
+            'inputs': self._inputs,
+            'outputs': self._outputs,
+            'normalized': self._normalized,
+            'metadata': self._metadata
+        }
+        with open(filepath, 'wb') as f:
+            pickle.dump(data, f)
     
     @classmethod
-    def from_tensors(cls, inputs: torch.Tensor, targets: torch.Tensor) -> 'NeuroMatrix':
-        """Creates a NeuroMatrix from PyTorch tensors."""
-        if not isinstance(inputs, torch.Tensor) or not isinstance(targets, torch.Tensor):
-            raise ValidationError(
-                "Invalid tensor types",
-                context=get_context(),
-                suggestions=["Both inputs and targets must be PyTorch tensors"]
-            )
-            
-        if len(inputs) != len(targets):
-            raise ValidationError(
-                "Mismatched tensor lengths",
-                context=get_context(),
-                suggestions=["Input and target tensors must have the same length"]
-            )
-            
-        # Check for inf/nan values
-        if torch.any(torch.isinf(inputs)) or torch.any(torch.isnan(inputs)):
-            raise ValidationError(
-                "Input tensor contains inf or nan values",
-                context=get_context(),
-                suggestions=["Ensure input values are finite numbers"]
-            )
-            
-        if torch.any(torch.isinf(targets)) or torch.any(torch.isnan(targets)):
-            raise ValidationError(
-                "Target tensor contains inf or nan values",
-                context=get_context(),
-                suggestions=["Ensure target values are finite numbers"]
-            )
-            
-        # Convert tensors to list of dictionaries
-        data = []
-        for x, y in zip(inputs, targets):
-            data.append({
-                'input': x.tolist(),
-                'output': y.tolist() if y.dim() > 0 else [float(y)]
-            })
-            
-        meta = {
-            'created': 'from_tensors',
-            'input_shape': list(inputs.shape[1:]),
-            'output_shape': list(targets.shape[1:]) if targets.dim() > 1 else [1],
-            'original_target_shape': list(targets.shape),
-            'original_target_dim': targets.dim()
-        }
+    def load(cls, filepath: str) -> 'NeuroMatrix':
+        """Load matrix data from file.
         
-        return cls(data, meta)
-    
-    def _validate_data(self):
-        """Validates the data format."""
-        if not isinstance(self.data, list):
-            raise ValidationError(
-                "Invalid data format",
-                context=get_context(),
-                suggestions=["Data must be a list of dictionaries"],
-                details={"provided_type": type(self.data).__name__}
-            )
+        Args:
+            filepath: Path to load file
             
-        for i, item in enumerate(self.data):
-            if not isinstance(item, dict):
-                raise ValidationError(
-                    f"Invalid data item at index {i}",
-                    context=get_context(),
-                    suggestions=["Each item must be a dictionary with 'input' and 'output' keys"],
-                    details={"item_type": type(item).__name__}
-                )
-                
-            if 'input' not in item or 'output' not in item:
-                raise ValidationError(
-                    f"Missing required keys in data item at index {i}",
-                    context=get_context(),
-                    suggestions=["Each item must have 'input' and 'output' keys"],
-                    details={"available_keys": list(item.keys())}
-                )
-    
-    def _prepare_tensors(self):
-        """Converts data to PyTorch tensors with proper shape handling."""
-        if not self.data:
-            raise ValidationError(
-                "Cannot create tensors from empty data",
-                context=get_context(),
-                suggestions=["Add data points before creating tensors"]
-            )
-        
-        # First validate dimensions
-        input_dim = len(self.data[0]['input'])
-        output_dim = len(self.data[0]['output']) if isinstance(self.data[0]['output'], list) else 1
-        
-        inputs = []
-        targets = []
-        
-        for i, item in enumerate(self.data):
-            if len(item['input']) != input_dim:
-                raise ValidationError(
-                    f"Mismatched input dimensions at index {i}",
-                    context=get_context(),
-                    suggestions=["Ensure all inputs have the same dimension"]
-                )
-            
-            curr_output = item['output']
-            if not isinstance(curr_output, list):
-                curr_output = [float(curr_output)]
-            
-            if len(curr_output) != output_dim:
-                raise ValidationError(
-                    f"Mismatched output dimensions at index {i}",
-                    context=get_context(),
-                    suggestions=["Ensure all outputs have the same dimension"]
-                )
-            
-            inputs.append(torch.tensor(item['input'], dtype=torch.float32))
-            targets.append(torch.tensor(curr_output, dtype=torch.float32))
-        
-        self.inputs = torch.stack(inputs)
-        self.targets = torch.stack(targets)
-        
-        # Store original shapes in meta
-        self.meta['input_shape'] = list(self.inputs.shape[1:])
-        self.meta['output_shape'] = list(self.targets.shape[1:])
-        self.meta['original_target_dim'] = len(self.data[0]['output']) if isinstance(self.data[0]['output'], list) else 0
-        
-        # Update model config if not set
-        if not self.model_config['input_size']:
-            self.model_config['input_size'] = input_dim
-        if not self.model_config['output_size']:
-            self.model_config['output_size'] = output_dim
-    
-    def __len__(self) -> int:
-        return len(self.data)
-    
-    def __getitem__(self, idx):
-        """Get a data point by index with proper tensor handling."""
-        if isinstance(idx, slice):
-            return NeuroMatrix(self.data[idx], self.meta)
-        
-        inputs = self.inputs[idx]
-        targets = self.targets[idx]
-        
-        return {
-            'input': inputs.tolist(),
-            'output': targets.tolist() if targets.dim() > 0 else [float(targets)]
-        }
-    
-    def to_torch_dataset(self) -> 'NeuroMatrix':
-        """Returns self as it's already a PyTorch Dataset."""
-        return self
+        Returns:
+            NeuroMatrix instance
+        """
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
 
-    def add_meta(self, name, created, description):
-        self.meta = {
-            'name': name,
-            'created': created,
-            'description': description
-        }
-
-    def add_model_config(self, config):
-        self.model_config = config
-
-    def add_data_point(self, input_data, output_data):
-        self.data.append({
-            'input': input_data,
-            'output': output_data
-        })
-
-    @staticmethod
-    def load(file_path):
-        """Load matrix data from a file."""
-        with open(file_path, 'r') as f:
-            try:
-                # Try JSON first
-                data = json.load(f)
-            except json.JSONDecodeError:
-                # If JSON fails, try YAML
-                f.seek(0)  # Reset file pointer
-                data = yaml.safe_load(f)
-            
-        if not isinstance(data, dict) or 'data' not in data:
-            raise ValidationError(
-                "Invalid file format",
-                context=get_context(),
-                suggestions=["File must contain a dictionary with 'data' key"]
-            )
-            
-        matrix = NeuroMatrix(data['data'], data.get('meta'))
-        
-        # Load model config if present
-        if 'model_config' in data:
-            matrix.model_config = data['model_config']
-        
+        matrix = cls()
+        matrix._inputs = data['inputs']
+        matrix._outputs = data['outputs']
+        matrix._normalized = data['normalized']
+        matrix._metadata = data.get('metadata', {})
+        matrix._input_shape = matrix._inputs.shape[1:] if matrix._inputs is not None else None
+        matrix._output_shape = matrix._outputs.shape[1:] if matrix._outputs is not None else None
+        matrix._num_samples = len(matrix._inputs) if matrix._inputs is not None else 0
         return matrix
 
-    def save(self, file_path):
-        """Save matrix data to a file."""
-        data = {
-            'meta': self.meta,
-            'model_config': self.model_config,
-            'data': self.data
-        }
-        
-        with open(file_path, 'w') as f:
-            json.dump(data, f, indent=2)
+    def __len__(self) -> int:
+        return len(self._inputs) if self._inputs is not None else 0
 
-    def validate(self):
-        """Validate the matrix format with proper error handling."""
-        if not self.meta:
-            self.meta = {'created_at': time.time()}
-        
-        if not self.data:
-            raise ValidationError(
-                "No data points found",
-                context=get_context(),
-                suggestions=["Add data points before validation"]
-            )
-        
-        for i, point in enumerate(self.data):
-            if 'input' not in point or 'output' not in point:
-                raise ValidationError(
-                    f"Data point {i} missing input or output",
-                    context=get_context(),
-                    suggestions=["Ensure all data points have 'input' and 'output' keys"]
-                )
-            
-            if point['input'] is None or not point['input']:
-                raise ValidationError(
-                    f"Empty input in data point {i}",
-                    context=get_context(),
-                    suggestions=["Ensure input values are not empty"]
-                )
-            
-            if point['output'] is None or not point['output']:
-                raise ValidationError(
-                    f"Empty output in data point {i}",
-                    context=get_context(),
-                    suggestions=["Ensure output values are not empty"]
-                )
-            
-            # Check for invalid values (inf, nan)
-            try:
-                input_tensor = torch.tensor(point['input'], dtype=torch.float32)
-                if torch.any(torch.isinf(input_tensor)) or torch.any(torch.isnan(input_tensor)):
-                    raise ValidationError(
-                        f"Invalid input values (inf/nan) in data point {i}",
-                        context=get_context(),
-                        suggestions=["Ensure all input values are finite numbers"]
-                    )
-            except (ValueError, TypeError):
-                raise ValidationError(
-                    f"Invalid input values in data point {i}",
-                    context=get_context(),
-                    suggestions=["Ensure all input values are valid numbers"]
-                )
-            
-            try:
-                if isinstance(point['output'], list):
-                    output_tensor = torch.tensor(point['output'], dtype=torch.float32)
-                    if torch.any(torch.isinf(output_tensor)) or torch.any(torch.isnan(output_tensor)):
-                        raise ValidationError(
-                            f"Invalid output values (inf/nan) in data point {i}",
-                            context=get_context(),
-                            suggestions=["Ensure all output values are finite numbers"]
-                        )
-                else:
-                    output_val = float(point['output'])
-                    if math.isinf(output_val) or math.isnan(output_val):
-                        raise ValidationError(
-                            f"Invalid output value (inf/nan) in data point {i}",
-                            context=get_context(),
-                            suggestions=["Ensure output value is a finite number"]
-                        )
-            except (ValueError, TypeError):
-                raise ValidationError(
-                    f"Invalid output values in data point {i}",
-                    context=get_context(),
-                    suggestions=["Ensure all output values are valid numbers"]
-                )
-        
-        return True
+    def __getitem__(self, idx: int) -> Tuple[np.ndarray, np.ndarray]:
+        if self._inputs is None:
+            raise NeuroValueError("No data available")
+        return self._inputs[idx], self._outputs[idx]
 
-    def to_tensors(self) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Convert the matrix data back to PyTorch tensors."""
-        if not hasattr(self, 'inputs') or not hasattr(self, 'targets'):
-            self._prepare_tensors()
-        
-        # Get original target shape and dimension from meta
-        original_shape = self.meta.get('original_target_shape')
-        original_dim = self.meta.get('original_target_dim', 1)
-        
-        # Handle inputs
-        inputs = self.inputs
-        
-        # Handle targets based on original dimensionality
-        if original_shape and len(original_shape) > 1:
-            # Multi-dimensional case
-            targets = self.targets.reshape(original_shape)
-        elif original_dim == 0:
-            # Scalar case (0-dimensional)
-            targets = self.targets.squeeze()
-        elif original_dim == 1:
-            # Vector case (1-dimensional)
-            targets = self.targets.squeeze(-1)
-        else:
-            # Default case
-            targets = self.targets
-            
-        return inputs, targets
+    def __iter__(self) -> Iterator[Tuple[np.ndarray, np.ndarray]]:
+        if self._inputs is None:
+            raise NeuroValueError("No data available")
+        for i in range(len(self)):
+            yield self[i]
 
-    def to_numpy(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Convert the matrix data to NumPy arrays."""
-        inputs, targets = self.to_tensors()
-        return inputs.numpy(), targets.numpy()
-
-    def normalize(self):
-        """Normalize the input data to have zero mean and unit variance."""
-        if not hasattr(self, 'inputs'):
-            self._prepare_tensors()
-            
-        # Convert to double precision for better numerical stability
-        inputs = self.inputs.double()
-        
-        # Calculate mean and center the data
-        mean = torch.mean(inputs, dim=0)
-        centered = inputs - mean
-        
-        # Calculate variance and std
-        variance = torch.mean(centered ** 2, dim=0)
-        std = torch.sqrt(variance)
-        
-        # Handle zero std case
-        std = torch.where(std == 0, torch.ones_like(std), std)
-        
-        # Normalize
-        self.inputs = (centered / std).float()  # Convert back to float32
-        
-        # Store normalization parameters
-        self.meta['normalization'] = {
-            'mean': mean.float().tolist(),
-            'std': std.float().tolist()
-        }
-        
-        # Update data points with normalized inputs
-        for i, point in enumerate(self.data):
-            point['input'] = self.inputs[i].tolist()
-        
+class NeuroDataLoader:
+    """Data loader for batch iteration."""
+    
+    def __init__(self, matrix: NeuroMatrix, batch_size: int = 32):
+        """Initialize the data loader."""
+        self.matrix = matrix
+        self.batch_size = batch_size
+        self.current_idx = 0
+    
+    def __iter__(self):
+        """Return self as iterator."""
+        self.current_idx = 0
         return self
-
-    def create_batches(self, batch_size: int) -> DataLoader:
-        """Create a DataLoader with proper tensor handling."""
-        dataset = TensorDataset(self.inputs, self.targets)
-        return DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
-    def concatenate(self, other: 'NeuroMatrix') -> 'NeuroMatrix':
-        """
-        Concatenate this matrix with another NeuroMatrix.
-        
-        Args:
-            other: Another NeuroMatrix instance
-            
-        Returns:
-            A new NeuroMatrix containing data from both matrices
-        """
-        if not isinstance(other, NeuroMatrix):
-            raise ValidationError(
-                "Invalid concatenation type",
-                context=get_context(),
-                suggestions=["Can only concatenate with another NeuroMatrix"],
-                details={"provided_type": type(other).__name__}
-            )
-            
-        combined_data = self.data + other.data
-        result = NeuroMatrix(combined_data)
-        
-        # Merge configurations
-        result.model_config = self.model_config.copy()
-        result.meta = {
-            'created_at': time.time(),
-            'combined_from': [self.meta.get('created_at'), other.meta.get('created_at')]
-        }
-        
-        return result
-
-    def get_statistics(self) -> Dict[str, Any]:
-        """
-        Calculate basic statistics of the dataset.
-        
-        Returns:
-            Dictionary containing statistics
-        """
-        inputs, targets = self.to_tensors()
-        
-        return {
-            'num_samples': len(self),
-            'input_shape': list(inputs.size()[1:]),
-            'input_mean': inputs.mean(dim=0).tolist(),
-            'input_std': inputs.std(dim=0).tolist(),
-            'output_mean': targets.mean(dim=0).tolist(),
-            'output_std': targets.std(dim=0).tolist()
-        }
-
-    def split(self, train_ratio=0.8):
-        """Split data into training and validation sets."""
-        split_idx = int(len(self.data) * train_ratio)
-        
-        train_data = self.data[:split_idx]
-        val_data = self.data[split_idx:]
-        
-        train_matrix = NeuroMatrix(train_data)
-        val_matrix = NeuroMatrix(val_data)
-        
-        # Copy configuration
-        train_matrix.model_config = self.model_config.copy()
-        val_matrix.model_config = self.model_config.copy()
-        
-        return train_matrix, val_matrix
-
-# Example usage
-if __name__ == '__main__':
-    # Create a new dataset
-    matrix = NeuroMatrix()
-    matrix.add_meta("Sample Dataset", "Example of binary classification")
     
-    # Add some sample data
-    matrix.add_data_point([0.5, 0.8, 0.3], [1.0])
-    matrix.add_data_point([0.2, 0.4, 0.1], [0.0])
+    def __next__(self):
+        """Get next batch."""
+        if self.current_idx >= len(self.matrix):
+            raise StopIteration
+        
+        end_idx = min(self.current_idx + self.batch_size, len(self.matrix))
+        batch_inputs = self.matrix.inputs[self.current_idx:end_idx]
+        batch_outputs = self.matrix.outputs[self.current_idx:end_idx]
+        
+        self.current_idx = end_idx
+        return batch_inputs, batch_outputs
     
-    # Set model configuration
-    layers = [
-        {'type': 'dense', 'neurons': 64, 'activation': 'relu'},
-        {'type': 'dense', 'neurons': 1, 'activation': 'sigmoid'}
-    ]
-    matrix.set_model_config(input_size=3, layers=layers)
-    
-    # Save to file
-    matrix.save('example.nrm')
-    
-    # Load and validate
-    loaded_matrix = NeuroMatrix.load('example.nrm')
-    loaded_matrix.validate()
-    
-    # Convert to PyTorch dataset
-    torch_dataset = loaded_matrix.to_torch_dataset()
-    print("Dataset created successfully!") 
+    def __len__(self):
+        """Get number of batches."""
+        return (len(self.matrix) + self.batch_size - 1) // self.batch_size 
