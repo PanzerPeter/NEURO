@@ -100,127 +100,183 @@ model = NeuralNetwork(input_size=224, output_size=10) {
 ### Model Branching
 
 ```neuro
-model = NeuralNetwork(input_size=224, output_size=10) {
-    Branch("feature_extractor") {
-        Conv2D(filters=32, kernel_size=3);
-        MaxPool(pool_size=2);
+model = NeuralNetwork(input_size=784, output_size=10) {
+    # Core layers
+    x = Dense(units=128, activation="relu")(x);
+    
+    # Branch 1: Classification
+    branch1 = Dense(units=64, activation="relu")(x);
+    output1 = Dense(units=10, activation="softmax")(branch1);
+    
+    # Branch 2: Reconstruction
+    branch2 = Dense(units=256, activation="relu")(x);
+    output2 = Dense(units=784, activation="sigmoid")(branch2);
+    
+    return [output1, output2];
+}
+```
+
+## Variables and Scope
+
+NEURO uses a block-based scope system, similar to many modern programming languages. Variables are accessible within their defining block and any nested blocks.
+
+```neuro
+x = 10;  # Global scope
+
+def function() {
+    y = 20;  # Function scope
+    print(x);  # Can access global variable
+    
+    if (true) {
+        z = 30;  # Block scope
+        print(y);  # Can access function variable
     }
     
-    Branch("classifier") {
-        Flatten();
-        Dense(units=10, activation="softmax");
+    print(z);  # Can access variables defined in inner blocks
+}
+```
+
+### Constants and Variable Reassignment
+
+```neuro
+PI = 3.14159;  # Convention for constants is UPPERCASE
+learning_rate = 0.01;  # Variables use snake_case
+
+# Variables can be reassigned
+learning_rate = 0.001;
+```
+
+## Control Flow
+
+### Conditionals
+
+```neuro
+if (condition) {
+    # Code to execute if condition is true
+} else if (another_condition) {
+    # Code to execute if another_condition is true
+} else {
+    # Code to execute if all conditions are false
+}
+```
+
+### Loops
+
+```neuro
+# For loop
+for (i in range(10)) {
+    print(i);
+}
+
+# Iterating over collections
+for (item in collection) {
+    print(item);
+}
+
+# Loop control
+for (i in range(100)) {
+    if (i < 10) {
+        continue;  # Skip to next iteration
     }
-}
-```
-
-## Advanced Features
-
-### Callbacks
-
-```neuro
-@before_training
-def prepare_data(data) {
-    return data.shuffle();
-}
-
-@after_epoch
-def check_metrics(model, metrics) {
-    if metrics.loss < 0.1 {
-        return "StopTraining";
+    if (i > 90) {
+        break;  # Exit loop
     }
+    print(i);
 }
 ```
 
-### Memory Management
+## Functions
 
 ```neuro
-# Enable gradient checkpointing for large models
-model.enable_checkpointing();
-
-# Set maximum memory usage
-model.set_memory_limit(max_gb=4);
+def calculate_accuracy(predictions, targets) {
+    correct = 0;
+    for (i in range(len(predictions))) {
+        if (predictions[i] == targets[i]) {
+            correct += 1;
+        }
+    }
+    return correct / len(predictions);
+}
 ```
 
-### Model Evaluation
+### Decorators
+
+NEURO supports decorators for adding functionality to functions:
 
 ```neuro
-# Evaluate model
-accuracy = model.evaluate(test_data);
+@timer
+def train_model(model, data, epochs) {
+    # Function implementation
+}
+```
 
-# Make predictions
-predictions = model.predict(new_data);
+Common built-in decorators:
+- `@custom_layer`: Define a custom neural network layer
+- `@pretrained`: Use a pre-trained model
+- `@timer`: Measure execution time
+- `@gpu`: Force execution on GPU
+
+## Error Handling
+
+NEURO provides detailed error messages for debugging:
+
+```
+Error: Invalid layer configuration at line 5, column 10
+Dense(units=-1, activation="relu");
+         ^
+Details: 'units' must be a positive integer
+```
+
+### Handling Syntax Errors
+
+When a syntax error occurs, NEURO will:
+1. Highlight the problematic code
+2. Indicate the exact position of the error
+3. Provide a description of the issue
+4. Suggest potential fixes
+
+### Runtime Errors
+
+Runtime errors include:
+- `NeuroRuntimeError`: General runtime errors
+- `NeuroTypeError`: Type-related errors
+- `NeuroValueError`: Invalid value errors
+- `NeuroShapeError`: Tensor shape mismatch errors
+- `NeuroLayerError`: Neural network layer errors
+
+## PyTorch Integration
+
+NEURO is built on top of PyTorch and can integrate directly with PyTorch components. 
+
+```neuro
+# Direct access to PyTorch tensors
+x = torch.randn(10, 10);
+
+# Using PyTorch functions
+y = torch.nn.functional.softmax(x, dim=1);
+```
+
+For more details, see the [PyTorch Integration Guide](pytorch_integration.md).
+
+## File Extensions
+
+NEURO uses the following file extensions:
+- `.nr`: NEURO source code files
+- `.nrm`: NEURO Matrix data format files
+
+## Comments
+
+NEURO supports single-line and multi-line comments:
+
+```neuro
+# This is a single-line comment
+
+/*
+  This is a
+  multi-line comment
+*/
 ```
 
 ## Best Practices
 
-1. **Model Structure**
-   - Start with simple architectures
-   - Add complexity gradually
-   - Use appropriate layer sizes
-
-2. **Training**
-   - Monitor training metrics
-   - Use validation data
-   - Implement early stopping
-   - Save model checkpoints
-
-3. **Data Handling**
-   - Always normalize input data
-   - Split data properly
-   - Handle imbalanced datasets
-   - Validate data quality
-
-4. **Memory Management**
-   - Use appropriate batch sizes
-   - Enable checkpointing for large models
-   - Monitor memory usage
-
-## Error Handling
-
-NEURO provides detailed error messages with suggestions:
-
-```neuro
-Error: Invalid layer configuration
-Location: Dense layer, line 5
-Suggestion: Check input dimensions
-Details: Expected input size 784, got 512
-```
-
-## Debugging
-
-Use the REPL for interactive debugging:
-
-```neuro
->>> model.summary()
->>> watch model.parameters
->>> debug model.forward(sample_input)
-```
-
-## Type System
-
-NEURO features a static type system for neural network components:
-
-- Tensor shapes are checked at runtime
-- Layer compatibility is verified
-- Automatic type inference for most operations
-
-## Performance Optimization
-
-1. **Memory Efficiency**
-   - Gradient checkpointing
-   - Automatic batch size optimization
-   - Memory-aware training
-
-2. **Computation Speed**
-   - JIT compilation support
-   - GPU acceleration
-   - Parallel data loading
-
-## Integration
-
-NEURO integrates seamlessly with:
-
-- PyTorch ecosystem
-- Popular data formats
-- Visualization tools
-- Experiment tracking platforms 
+For coding standards and best practices, refer to the [Best Practices Guide](best_practices.md). 

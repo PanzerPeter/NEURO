@@ -2,11 +2,45 @@
 
 Welcome to NEURO, a domain-specific language designed for neural network development and deep learning experimentation. This guide will help you get started with NEURO quickly and effectively.
 
+## System Requirements
+
+- Python 3.8 or higher
+- CUDA-capable GPU (optional, but recommended for deep learning)
+- 4GB RAM minimum (8GB+ recommended)
+- Operating Systems: Windows, Linux, or macOS
+
 ## Installation
 
+### From Source (Recommended for Development)
+
 ```bash
-pip install neuro-lang
+# Clone the repository
+git clone https://github.com/PanzerPeter/NEURO.git
+cd NEURO
+
+# Create and activate virtual environment (optional but recommended)
+python -m venv venv
+
+# On Windows:
+# venv\Scripts\activate
+
+# On Unix or MacOS:
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Install in development mode
+pip install -e .
 ```
+
+### Dependencies
+
+NEURO depends on the following packages:
+- PyTorch 2.6+
+- NumPy 2.2+
+- PLY 3.11+
+- Click 8.1+
 
 ## Your First Neural Network
 
@@ -18,6 +52,10 @@ model = NeuralNetwork(input_size=2, output_size=1) {
     Dense(units=32, activation="relu");
     Dense(units=1, activation="sigmoid");
 }
+
+# Configure loss and optimizer
+loss = Loss(type="binary_crossentropy");
+optimizer = Optimizer(type="adam", learning_rate=0.001);
 
 # Train the model
 model.train(data, epochs=10, batch_size=32);
@@ -45,8 +83,8 @@ NEURO is built around these core concepts:
 
 - Read the [Language Guide](language_guide.md) for detailed syntax information
 - Check out [Examples](examples.md) for common use cases
-- Learn about [Advanced Features](advanced_features.md)
 - Review [Best Practices](best_practices.md)
+- See the [FAQ](faq.md) for common questions
 
 ## Quick Tips
 
@@ -67,8 +105,12 @@ NEURO is built around these core concepts:
    data.normalize();
    ```
 
+## File Extensions
+
+- `.nr`: NEURO source code files
+- `.nrm`: NEURO Matrix data files
+
 ## Need Help?
 
 - Check our [FAQ](faq.md)
-- Join our community on Discord
-- Report issues on GitHub 
+- Report issues on the [GitHub repository](https://github.com/PanzerPeter/NEURO/issues) 
