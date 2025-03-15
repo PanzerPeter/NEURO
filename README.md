@@ -34,16 +34,29 @@ NEURO is a powerful domain-specific language (DSL) designed for creating, traini
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/NEURO.git
+git clone https://github.com/PanzerPeter/NEURO.git
 cd NEURO
 
 # Create and activate virtual environment (optional but recommended)
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# On Windows:
+# venv\Scripts\activate
+# On Unix or MacOS:
+source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
+
+# Install in development mode
+pip install -e .
 ```
+
+## Requirements
+
+- Python 3.8 or higher
+- PyTorch 2.6+
+- NumPy 2.2+
+- Other dependencies as listed in requirements.txt
 
 ## Quick Start
 
@@ -75,11 +88,16 @@ NEURO/
 ├── src/
 │   ├── __init__.py
 │   ├── interpreter.py    # Core interpreter implementation
+│   ├── lexer.py         # NEURO language lexer
 │   ├── parser.py        # NEURO language parser
+│   ├── ast.py           # Abstract Syntax Tree implementation
 │   ├── matrix.py        # Data handling implementation
+│   ├── builtins.py      # Built-in functions and classes
+│   ├── errors.py        # Error handling utilities
 │   └── neuro.py         # Main entry point
 ├── examples/            # Example NEURO programs
 ├── docs/               # Documentation
+├── tests/              # Test suite
 ├── LICENSE              # License
 └── requirements.txt    # Project dependencies
 ```

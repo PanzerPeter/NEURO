@@ -6,13 +6,13 @@ Versions will be specified for stability.
 """
 
 # Core dependencies
-torch>=2.0.0
-numpy>=1.21.0
+torch>=2.6.0
+numpy>=2.2.0
 ply>=3.11
-click>=8.0.0
+click>=8.1.8
 
 # Development dependencies
-pytest>=7.0.0
-black>=22.0.0
-flake8>=4.0.0
-mypy>=1.0.0 
+pytest>=8.3.0
+black>=25.1.0
+flake8>=7.1.0
+mypy>=1.15.0 
