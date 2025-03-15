@@ -809,17 +809,43 @@ class NeuroInterpreter(NodeVisitor):
         return custom_layer_factory
 
     def visit_BranchNode(self, node: BranchNode) -> nn.Module:
-        """Create a branch in the network."""
+        """Create a branch in the network.
+        
+        Args:
+            node: Branch definition node
+            
+        Returns:
+            Branch module
+        """
+        from .builtins import Branch, CustomLayer
+        
+        # Create a new branch with the given name
+        branch_name = node.name
+        branch = Branch(branch_name)
+        
+        # Create a new scope for the branch
         self.push_scope()
+        
+        # Process parameters if any
         for param in node.parameters:
-            self.current_scope[param.name] = self.visit(param.value)
+            param_name = param.name
+            param_value = self.visit(param.value)
+            self.current_scope[param_name] = param_value
         
         # Execute branch body
         for stmt in node.body:
-            self.visit(stmt)
-            
-        branch = self.return_value
+            layer = self.visit(stmt)
+            if isinstance(layer, nn.Module):
+                branch.add_layer(layer)
+        
+        # Pop the scope when done
         self.pop_scope()
+        
+        # Register the branch in the current model if it exists
+        current_model = self.current_scope.get('model')
+        if current_model and hasattr(current_model, 'add_branch'):
+            current_model.add_branch(branch_name, branch)
+        
         return branch
 
     def visit_LossNode(self, node: LossNode) -> nn.Module:
@@ -1595,6 +1621,160 @@ class NeuroInterpreter(NodeVisitor):
                 raise NeuroRuntimeError("Invalid delete operation: missing variable name")
         else:
             raise NeuroRuntimeError(f"Invalid delete operation: {node}")
+
+    def visit_DecoratorNode(self, node: DecoratorNode) -> Callable:
+        """Process a decorator and apply it to the function."""
+        # Get the function object
+        function = self.visit(node.function)
+        
+        # Get the decorator type
+        decorator_type = node.type.lower() if isinstance(node.type, str) else node.type
+        
+        # Apply the appropriate decorator based on type
+        if decorator_type == 'timer':
+            # Apply timer decorator
+            return self._apply_timer_decorator(function)
+        elif decorator_type == 'gpu':
+            # Apply GPU decorator
+            return self._apply_gpu_decorator(function)
+        elif decorator_type == 'pretrained':
+            # Apply pretrained model decorator
+            if hasattr(node, 'args') and node.args:
+                model_name = self.visit(node.args[0])
+                return self._apply_pretrained_decorator(function, model_name)
+            else:
+                raise NeuroRuntimeError("@pretrained decorator requires a model name argument")
+        elif decorator_type == 'custom_layer':
+            # Apply custom layer decorator
+            return self._apply_custom_layer_decorator(function)
+        elif decorator_type == 'before_training':
+            # Apply before_training callback decorator
+            return self._register_training_callback(function, 'before_training')
+        elif decorator_type == 'after_epoch':
+            # Apply after_epoch callback decorator
+            return self._register_training_callback(function, 'after_epoch')
+        elif decorator_type == 'after_batch':
+            # Apply after_batch callback decorator
+            return self._register_training_callback(function, 'after_batch')
+        else:
+            # For unknown decorators, just return the function
+            print(f"Warning: Unknown decorator type '{decorator_type}'")
+            return function
+    
+    def _apply_timer_decorator(self, func: Callable) -> Callable:
+        """Apply a timer decorator to the function."""
+        def timer_wrapper(*args, **kwargs):
+            import time
+            start_time = time.time()
+            result = func(*args, **kwargs)
+            end_time = time.time()
+            print(f"Function '{func.__name__}' took {end_time - start_time:.4f} seconds to execute")
+            return result
+        return timer_wrapper
+    
+    def _apply_gpu_decorator(self, func: Callable) -> Callable:
+        """Apply a GPU decorator to the function to ensure execution on GPU."""
+        def gpu_wrapper(*args, **kwargs):
+            if not torch.cuda.is_available():
+                print("Warning: GPU requested but CUDA is not available. Using CPU.")
+                return func(*args, **kwargs)
+            
+            # Move any tensor arguments to GPU
+            gpu_args = []
+            for arg in args:
+                if isinstance(arg, torch.Tensor):
+                    gpu_args.append(arg.cuda())
+                elif isinstance(arg, nn.Module):
+                    gpu_args.append(arg.cuda())
+                else:
+                    gpu_args.append(arg)
+            
+            # Move any tensor keyword arguments to GPU
+            gpu_kwargs = {}
+            for key, value in kwargs.items():
+                if isinstance(value, torch.Tensor):
+                    gpu_kwargs[key] = value.cuda()
+                elif isinstance(value, nn.Module):
+                    gpu_kwargs[key] = value.cuda()
+                else:
+                    gpu_kwargs[key] = value
+            
+            # Run function on GPU
+            result = func(*gpu_args, **gpu_kwargs)
+            
+            # Move result back to CPU if it's a tensor
+            if isinstance(result, torch.Tensor):
+                return result.cpu()
+            elif isinstance(result, nn.Module):
+                return result.cpu()
+            else:
+                return result
+        
+        return gpu_wrapper
+    
+    def _apply_pretrained_decorator(self, func: Callable, model_name: str) -> Callable:
+        """Apply a pretrained model decorator to the function."""
+        def pretrained_wrapper(*args, **kwargs):
+            # Check for PyTorch hub models
+            if model_name in ['resnet18', 'resnet34', 'resnet50', 'vgg16', 'mobilenet_v2']:
+                try:
+                    import torch.hub
+                    # Load pretrained model
+                    pretrained_model = torch.hub.load('pytorch/vision:v0.10.0', model_name, pretrained=True)
+                    
+                    # Attach the pretrained model to the first argument (assumed to be 'self')
+                    if args and hasattr(args[0], 'pretrained_model'):
+                        args[0].pretrained_model = pretrained_model
+                    
+                    # Call the original function
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    raise NeuroRuntimeError(f"Failed to load pretrained model '{model_name}': {str(e)}")
+            else:
+                # Check for local models or other model sources
+                try:
+                    # Try to load from file
+                    pretrained_model = torch.load(model_name)
+                    
+                    # Attach the pretrained model to the first argument (assumed to be 'self')
+                    if args and hasattr(args[0], 'pretrained_model'):
+                        args[0].pretrained_model = pretrained_model
+                    
+                    # Call the original function
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    raise NeuroRuntimeError(f"Failed to load pretrained model '{model_name}': {str(e)}")
+        
+        return pretrained_wrapper
+    
+    def _apply_custom_layer_decorator(self, func: Callable) -> Callable:
+        """Apply a custom layer decorator to the function."""
+        def custom_layer_wrapper(*args, **kwargs):
+            # Create a new CustomLayer instance
+            from .builtins import CustomLayer
+            layer = CustomLayer()
+            
+            # Call the original function to build the layer
+            result = func(*args, **kwargs)
+            
+            # If the function returned a module, add it to the custom layer
+            if isinstance(result, nn.Module):
+                layer.add_layer(result)
+            
+            return layer
+        
+        return custom_layer_wrapper
+    
+    def _register_training_callback(self, func: Callable, callback_type: str) -> Callable:
+        """Register a training callback function."""
+        # Store the callback function in the appropriate global registry
+        callback_name = f"{callback_type}_callback"
+        
+        # Store the callback in the current scope
+        self.current_scope[callback_name] = func
+        
+        # Return the original function
+        return func
 
     def interpret(self, node: Program) -> None:
         """Interpret a program."""

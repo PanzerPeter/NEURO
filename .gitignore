@@ -39,6 +39,7 @@ ENV/
 .pydevproject
 .settings/
 tests/
+run_tests.bat
 
 
 # NEURO specific
