@@ -1,8 +1,8 @@
 # NEURO Parser: Converts .nr code into an Abstract Syntax Tree (AST)
 
-from src.lexer import NeuroLexer # We'll need the lexer output
-import src.neuro_ast as neuro_ast # Use alias to avoid standard library conflicts
-from src.errors import NeuroSyntaxError # Use custom errors
+from src.lexer import NeuroLexer
+import src.neuro_ast as neuro_ast
+from src.errors import NeuroSyntaxError
 import logging
 
 class NeuroParser:
