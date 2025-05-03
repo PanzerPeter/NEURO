@@ -11,7 +11,7 @@
 
 ## Neural Network Components
 [x] NeuralNetwork class
-[ ] Layer base class
+[x] Layer base class
 [x] Dense (Fully Connected) layer
 [ ] Convolutional layers (Conv2D)
 [ ] Pooling layers (MaxPool, AvgPool)

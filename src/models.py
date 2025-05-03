@@ -22,6 +22,8 @@ ACTIVATION_REGISTRY = {
     'relu': nn.ReLU,
     'sigmoid': nn.Sigmoid,
     # Add other activation functions here as needed (tanh, softmax, etc.)
+    'tanh': nn.Tanh,       # Added Tanh
+    'softmax': nn.Softmax  # Added Softmax (consider dim parameter)
 }
 
 class NeuralNetwork(nn.Module):
@@ -56,8 +58,16 @@ class NeuralNetwork(nn.Module):
             if activation_name:
                 act_module_class = ACTIVATION_REGISTRY.get(activation_name.lower())
                 if act_module_class:
-                    activation_module = act_module_class()
-                    print(f"    Found Activation for this layer: {activation_name}")
+                    # Special handling for Softmax dimension if needed
+                    if activation_name.lower() == 'softmax':
+                        # Defaulting to dim=1 for typical classification tasks
+                        # This might need to be configurable via layer_params in the future
+                        softmax_dim = layer_params.get('dim', 1) 
+                        activation_module = act_module_class(dim=int(softmax_dim))
+                        print(f"    Found Activation for this layer: {activation_name} (dim={softmax_dim})")
+                    else:
+                        activation_module = act_module_class()
+                        print(f"    Found Activation for this layer: {activation_name}")
                 else:
                     raise NeuroTypeError(f"Unknown activation function: '{activation_name}' specified for layer type {layer_type} (Layer {i}). Supported: {list(ACTIVATION_REGISTRY.keys())}")
             
@@ -107,8 +117,12 @@ class NeuralNetwork(nn.Module):
             epochs (int): Number of training epochs.
             learning_rate (float): Learning rate for the optimizer.
             batch_size (int): Size of mini-batches for training.
+
+        Returns:
+            list[float]: A list containing the average loss for each epoch.
         """
         print(f"\nStarting training for {epochs} epochs...")
+        history = [] # Initialize history list
         
         # --- Select Loss Function ---
         loss_fn_name_lower = loss_fn_name.lower()
@@ -116,8 +130,11 @@ class NeuralNetwork(nn.Module):
             loss_fn = BCELoss() 
         elif loss_fn_name_lower == 'mse':
             loss_fn = nn.MSELoss() # Use torch MSELoss
+        elif loss_fn_name_lower == 'crossentropy': # Added CrossEntropy
+             loss_fn = nn.CrossEntropyLoss() # Use torch CrossEntropyLoss
         else:
-            raise ValueError(f"Unsupported loss function: {loss_fn_name}. Supported: ['bce', 'mse']")
+            # Updated error message to include crossentropy
+            raise ValueError(f"Unsupported loss function: {loss_fn_name}. Supported: ['bce', 'mse', 'crossentropy']")
             
         # --- Select Optimizer ---
         optimizer_name_lower = optimizer_name.lower()
@@ -125,8 +142,11 @@ class NeuralNetwork(nn.Module):
             optimizer = Adam(self.parameters(), lr=learning_rate) 
         elif optimizer_name_lower == 'sgd':
              optimizer = optim.SGD(self.parameters(), lr=learning_rate) # Use torch SGD
+        elif optimizer_name_lower == 'rmsprop': # Added RMSprop
+             optimizer = optim.RMSprop(self.parameters(), lr=learning_rate) # Use torch RMSprop
         else:
-            raise ValueError(f"Unsupported optimizer: {optimizer_name}. Supported: ['adam', 'sgd']")
+            # Updated error message to include rmsprop
+            raise ValueError(f"Unsupported optimizer: {optimizer_name}. Supported: ['adam', 'sgd', 'rmsprop']")
 
         # Ensure model is in training mode
         self.train()
@@ -151,9 +171,11 @@ class NeuralNetwork(nn.Module):
                 epoch_loss += loss.detach().item()
 
             avg_epoch_loss = epoch_loss / num_batches
+            history.append(avg_epoch_loss) # Store average epoch loss
             print(f"Epoch [{epoch+1}/{epochs}], Loss: {avg_epoch_loss:.4f}")
             
         print("Training finished.")
+        return history # Return the recorded history
 
     def __str__(self):
         # Provide a string representation including the model structure
