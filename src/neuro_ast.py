@@ -77,4 +77,10 @@ class StringLiteral(ASTNode):
     def __init__(self, value):
         self.value = value
 
+class FunctionCall(ASTNode):
+    """Node representing a function call like 'func_name(arg1, arg2, ...)'."""
+    def __init__(self, func_name, args):
+        self.func_name = func_name # Identifier node (or just the string name?)
+        self.args = args         # List of argument nodes (expressions)
+
 # Add more node types as the language grammar expands (e.g., assignments, function calls, etc.) 

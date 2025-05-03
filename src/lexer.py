@@ -1,5 +1,6 @@
 # NEURO Lexer: Converts .nr code into a stream of tokens.
 import re
+import codecs # Import codecs
 from src.errors import NeuroSyntaxError
 
 class Token:
@@ -26,7 +27,7 @@ class NeuroLexer:
             
             # Literals
             ('NUMBER',      r'(?:0|[1-9]\d*)(?:\.\d+)?'),      # Integers and floats
-            ('STRING',      r'"(?:[^"\\]|\\.)*"'),             # Double-quoted strings
+            ('STRING',      r'"(?:[^"\\]|\\\\|\.)*"'),         # Double-quoted strings
             
             # Operators, delimiters and punctuation
             ('ASSIGN',      r'='),                             # Assignment operator
@@ -107,55 +108,48 @@ class NeuroLexer:
             
         tokens = []
         for mo in self.token_regex.finditer(code):
-            # Get the token type and value
             token_type = mo.lastgroup
             token_value = mo.group()
             column = mo.start() - line_start + 1
             
-            # Skip comments and whitespace
             if token_type == 'COMMENT' or token_type == 'WHITESPACE':
-                # Update line number and line_start if we encounter a newline
                 newlines = token_value.count('\n')
                 if newlines > 0:
                     line_num += newlines
                     line_start = mo.start() + token_value.rindex('\n') + 1
                 continue
                 
-            # Check for invalid tokens
             if token_type == 'INVALID':
                 error_msg = f"Unexpected character: '{token_value}'"
                 raise NeuroSyntaxError(error_msg, line_num, column)
                 
-            # Check if an identifier is actually a keyword
             if token_type == 'IDENTIFIER' and token_value in self.keywords:
                 token_type = self.keywords[token_value]
                 
-            # Process literals
             if token_type == 'NUMBER':
-                # Convert to int or float as appropriate
                 if '.' in token_value:
                     token_value = float(token_value)
                 else:
                     token_value = int(token_value)
             elif token_type == 'STRING':
-                # Remove the quotes and process escape sequences
-                token_value = token_value[1:-1].replace('\\"', '"').replace('\\\\', '\\')
+                # Remove the outer quotes
+                string_content = token_value[1:-1]
+                # Use codecs.decode to handle standard Python escape sequences
+                try:
+                    token_value = codecs.decode(string_content, 'unicode_escape')
+                except UnicodeDecodeError as e:
+                     raise NeuroSyntaxError(f"Invalid escape sequence in string literal: {e}", line_num, column + 1 + e.start) # Adjust column
                 
-            # Create and yield the token
             token = Token(token_type, token_value, line_num, column)
             tokens.append(token)
             
-            # Update line number and line_start if we encounter a newline in a token
-            # (shouldn't happen in most cases, but included for completeness)
             if isinstance(token_value, str) and '\n' in token_value:
                 newlines = token_value.count('\n')
                 line_num += newlines
                 line_start = mo.start() + token_value.rindex('\n') + 1
         
-        # Add an EOF token at the end
         tokens.append(Token('EOF', None, line_num, 1))
         
-        # Return all tokens at once
         for token in tokens:
             yield token
             

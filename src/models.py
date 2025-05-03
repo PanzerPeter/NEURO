@@ -1,9 +1,14 @@
 import torch
 import torch.nn as nn
+import torch.optim as optim # Import optim
 from collections import OrderedDict
 from src.errors import NeuroTypeError # Import the custom error type
 from .losses import BCELoss # Assuming losses.py is in the same directory
+# We might need more losses later
+# from torch.nn import MSELoss 
 from .optimizers import Adam # Assuming optimizers.py is in the same directory
+# We might need more optimizers later
+# from torch.optim import SGD
 
 # Placeholder for layer mapping (will be expanded)
 LAYER_REGISTRY = {
@@ -92,12 +97,13 @@ class NeuralNetwork(nn.Module):
     def train_model(self, X_train, y_train, loss_fn_name='bce', optimizer_name='adam', epochs=10, learning_rate=0.001, batch_size=32):
         """
         Basic training loop for the neural network.
+        Now supports mse loss and sgd optimizer.
 
         Args:
             X_train (torch.Tensor): Training features.
             y_train (torch.Tensor): Training labels.
-            loss_fn_name (str): Name of the loss function ('bce').
-            optimizer_name (str): Name of the optimizer ('adam').
+            loss_fn_name (str): Name of the loss function ('bce', 'mse').
+            optimizer_name (str): Name of the optimizer ('adam', 'sgd').
             epochs (int): Number of training epochs.
             learning_rate (float): Learning rate for the optimizer.
             batch_size (int): Size of mini-batches for training.
@@ -105,47 +111,43 @@ class NeuralNetwork(nn.Module):
         print(f"\nStarting training for {epochs} epochs...")
         
         # --- Select Loss Function ---
-        if loss_fn_name.lower() == 'bce':
-            loss_fn = BCELoss() # Use the imported class
+        loss_fn_name_lower = loss_fn_name.lower()
+        if loss_fn_name_lower == 'bce':
+            loss_fn = BCELoss() 
+        elif loss_fn_name_lower == 'mse':
+            loss_fn = nn.MSELoss() # Use torch MSELoss
         else:
-            raise ValueError(f"Unsupported loss function: {loss_fn_name}. Supported: ['bce']")
+            raise ValueError(f"Unsupported loss function: {loss_fn_name}. Supported: ['bce', 'mse']")
             
         # --- Select Optimizer ---
-        if optimizer_name.lower() == 'adam':
-            optimizer = Adam(self.parameters(), lr=learning_rate) # Use the imported class
+        optimizer_name_lower = optimizer_name.lower()
+        if optimizer_name_lower == 'adam':
+            optimizer = Adam(self.parameters(), lr=learning_rate) 
+        elif optimizer_name_lower == 'sgd':
+             optimizer = optim.SGD(self.parameters(), lr=learning_rate) # Use torch SGD
         else:
-            raise ValueError(f"Unsupported optimizer: {optimizer_name}. Supported: ['adam']")
+            raise ValueError(f"Unsupported optimizer: {optimizer_name}. Supported: ['adam', 'sgd']")
 
         # Ensure model is in training mode
         self.train()
 
         num_samples = X_train.shape[0]
-        num_batches = (num_samples + batch_size - 1) // batch_size # Calculate number of batches
+        num_batches = (num_samples + batch_size - 1) // batch_size
 
         for epoch in range(epochs):
             epoch_loss = 0.0
-            permutation = torch.randperm(num_samples) # Shuffle data each epoch
+            permutation = torch.randperm(num_samples)
             
             for i in range(0, num_samples, batch_size):
                 indices = permutation[i:i + batch_size]
                 batch_X, batch_y = X_train[indices], y_train[indices]
                 
-                # 1. Zero gradients
                 optimizer.zero_grad()
-
-                # 2. Forward pass
-                outputs = self(batch_X) # Call the forward method
-
-                # 3. Calculate loss
+                outputs = self(batch_X)
                 loss = loss_fn(outputs, batch_y)
-
-                # 4. Backward pass
                 loss.backward()
-
-                # 5. Optimizer step
                 optimizer.step()
                 
-                # Use .detach() before .item() to avoid warning
                 epoch_loss += loss.detach().item()
 
             avg_epoch_loss = epoch_loss / num_batches

@@ -4,18 +4,30 @@
 import sys
 import os
 import src.neuro_ast as neuro_ast # Use alias to avoid standard library conflicts
-from src.errors import NeuroInterpreterError, NeuroNameError, NeuroTypeError
+from src.errors import NeuroInterpreterError, NeuroNameError, NeuroTypeError, NeuroError
 # Import the actual network model
 from src.models import NeuralNetwork
 import torch
+# from src.parser import NeuroParser, neuro_ast # Assuming neuro_ast contains AST node definitions -> Redundant?
+# from src.interpreter import NeuroInterpreter # Keep existing import if needed -> Redundant?
+# from src.errors import NeuroError, NeuroNameError, NeuroTypeError # Import relevant errors -> Redundant?
+# from src.models import NeuralNetwork # Import NeuralNetwork -> Redundant?
+from src.matrix import NeuroMatrix, NeuroDataError # Import NeuroMatrix and its error
 
 class NeuroInterpreter:
     def __init__(self):
-        self.variables = {} # Stores defined models, potentially data later
-        self.config = {      # Stores global config like loss, optimizer
-            'loss': None,
+        """Initializes the interpreter's state."""
+        self.variables = {}  # Symbol table for variables
+        self.functions = { # Built-in functions
+            'print': self._print_function,
+            'load_matrix': self._load_matrix_function, # Add load_matrix
+            # Add other built-in functions here
+        } 
+        self.config = { # Holds configuration like loss, optimizer settings
+            'loss': None, 
             'optimizer': None
         }
+        # Add any other necessary state, e.g., for model tracking
 
     def interpret(self, node):
         """Interprets the AST starting from the given node (usually Program)."""
@@ -50,43 +62,33 @@ class NeuroInterpreter:
         return last_result # Return result of the last statement
 
     def visit_AssignmentStatement(self, node: neuro_ast.AssignmentStatement):
-        """Handles assignment statements like 'model = NeuralNetwork(...)'"""
+        """Handles assignment statements like 'var = expression'"""
         target_name = node.target.name
         print(f"Assigning to variable: {target_name}")
-        value = self.visit(node.value) # Evaluate the right-hand side
         
-        # If the value is a ModelDefinition result, create the actual network
+        # Evaluate the right-hand side expression first
+        value = self.visit(node.value) 
+        
+        # Handle specific definition types that configure things rather than return direct values
         if isinstance(value, dict) and value.get('type') == 'ModelDefinition':
             model_params = value['params']
             model_layers = value['layers']
-            # Create the actual PyTorch model instance
-            # The ModelDefinition node itself holds the name from the assignment
             model_object = NeuralNetwork(name=value['name'], params=model_params, layer_nodes=model_layers)
             self.variables[target_name] = model_object
             print(f"  Stored NeuralNetwork object '{target_name}' in variables.")
-        # Handle other assignment types if needed (e.g., loss = Loss(...))
         elif isinstance(value, dict) and value.get('type') == 'LossDefinition':
              print(f"Configuring loss: {value['params']}")
-             self.config['loss'] = value['params'] # Store config
-             # Store None in the variable table for the assignment target `loss` itself
-             self.variables[target_name] = None 
+             self.config['loss'] = value['params'] 
+             self.variables[target_name] = None # Assign None to the variable 'loss' itself
         elif isinstance(value, dict) and value.get('type') == 'OptimizerDefinition':
             print(f"Configuring optimizer: {value['params']}")
-            self.config['optimizer'] = value['params'] # Store config
-            # Store None in the variable table for the assignment target `optimizer` itself
-            self.variables[target_name] = None
+            self.config['optimizer'] = value['params'] 
+            self.variables[target_name] = None # Assign None to the variable 'optimizer' itself
         else:
-            # Store the evaluated value directly (e.g., result of evaluate, literals)
-            value_to_store = value
-            # Special case: if RHS was EvaluateStatement, it already returned the result (e.g., accuracy)
-            if isinstance(value, neuro_ast.EvaluateStatement):
-                 # Re-visit the EvaluateStatement node to get its *result* for storage
-                 # This assumes visit_EvaluateStatement returns the actual value
-                 print(f"Re-visiting EvaluateStatement to get result for assignment...")
-                 value_to_store = self.visit_EvaluateStatement(value)
-                 
-            self.variables[target_name] = value_to_store
-            print(f"  Stored value of type {type(value_to_store)} for variable '{target_name}'.")
+            # For all other expressions (literals, function calls, etc.), 
+            # the 'value' IS the result we want to store.
+            self.variables[target_name] = value
+            print(f"  Stored value of type {type(value).__name__} for variable '{target_name}'.")
             
         return None # Assignment statement itself doesn't return a value
 
@@ -138,23 +140,86 @@ class NeuroInterpreter:
 
     def visit_TrainStatement(self, node: neuro_ast.TrainStatement):
         model_name = node.model_name
-        data_source_name = node.data_source.name if isinstance(node.data_source, neuro_ast.Identifier) else str(node.data_source)
+        if not isinstance(node.data_source, neuro_ast.Identifier):
+             raise NeuroTypeError(f"Training data source for model '{model_name}' must be a variable name (Identifier), got {type(node.data_source)}")
+        data_source_name = node.data_source.name
         
-        print(f"Initiating training for model '{model_name}'")
-        print(f"  Data source: {data_source_name}")
-        print(f"  Training parameters: {node.params}")
+        print(f"Interpreter: Initiating training for model '{model_name}'")
+        
+        # --- Get Model ---
+        # Check if model variable exists FIRST
         if model_name not in self.variables:
-            raise NeuroNameError(f"Variable '{model_name}' is not defined.")
-            
-        model_object = self.variables.get(model_name)
-        if not isinstance(model_object, NeuralNetwork):
-             raise NeuroTypeError(f"Variable '{model_name}' is not a trainable NeuralNetwork object (found {type(model_object)})." )
+             raise NeuroNameError(f"Variable '{model_name}' is not defined.")
              
-        # TODO: Load data (using NeuroMatrix?)
-        # TODO: Get loss and optimizer from self.config
-        # TODO: Implement actual training loop using PyTorch
-        print(f"(Placeholder) Training model '{model_name}' ({type(model_object)})...")
-        return None # Or return training history/metrics
+        model_object = self.variables.get(model_name)
+        # THEN check if it's the right type
+        if not isinstance(model_object, NeuralNetwork):
+             raise NeuroTypeError(f"Variable '{model_name}' is not a trainable NeuralNetwork object (found {type(model_object)}).")
+             
+        # --- Get Data ---
+        # Check if data variable exists FIRST
+        if data_source_name not in self.variables:
+            raise NeuroNameError(f"Data variable '{data_source_name}' is not defined.")
+            
+        data_object = self.variables.get(data_source_name)
+        # THEN check if it's the right type
+        if not isinstance(data_object, NeuroMatrix):
+             raise NeuroTypeError(f"Data variable '{data_source_name}' is not a NeuroMatrix object (found {type(data_object)}).")
+             
+        # Extract data and convert to tensors
+        try:
+            X = torch.tensor([item['input'] for item in data_object.data], dtype=torch.float32)
+            y = torch.tensor([item['output'] for item in data_object.data], dtype=torch.float32)
+            if len(y.shape) == 1:
+                y = y.unsqueeze(1)
+        except (KeyError, TypeError, ValueError) as e:
+             raise NeuroDataError(f"Error processing data from '{data_source_name}': {e}")
+
+        print(f"  Data source: {data_source_name} (Loaded {len(X)} samples)")
+        
+        # --- Get Loss/Optimizer Config from Interpreter State ---
+        loss_config = self.config.get('loss')
+        optimizer_config = self.config.get('optimizer')
+
+        if not loss_config or not isinstance(loss_config, dict):
+             raise NeuroError(f"Loss function not properly configured before training '{model_name}'. Use 'loss = Loss(type=...)'.")
+        if not optimizer_config or not isinstance(optimizer_config, dict):
+             raise NeuroError(f"Optimizer not properly configured before training '{model_name}'. Use 'optimizer = Optimizer(type=...)'.")
+
+        # --- Extract parameters needed by train_model --- 
+        try:
+            loss_fn_name = loss_config.get('type')
+            optimizer_name = optimizer_config.get('type')
+            learning_rate = float(optimizer_config.get('learning_rate', 0.001))
+            
+            epochs = int(node.params.get('epochs', 10)) 
+            batch_size = int(node.params.get('batch_size', 32)) 
+            
+            if not loss_fn_name or not optimizer_name:
+                 raise NeuroTypeError("Loss/Optimizer configuration missing 'type' parameter.")
+                 
+        except (ValueError, TypeError, KeyError) as e:
+            raise NeuroTypeError(f"Invalid or missing parameter in Loss/Optimizer/Train configuration for '{model_name}': {e}")
+
+        print(f"  Extracted Loss Type: {loss_fn_name}")
+        print(f"  Extracted Optimizer Type: {optimizer_name}")
+        print(f"  Extracted LR: {learning_rate}")
+        print(f"  Extracted Epochs: {epochs}")
+        print(f"  Extracted Batch Size: {batch_size}")
+
+        # --- Call the actual training method with correct arguments ---
+        history = model_object.train_model(
+            X_train=X, 
+            y_train=y, 
+            loss_fn_name=loss_fn_name,
+            optimizer_name=optimizer_name,
+            epochs=epochs, 
+            learning_rate=learning_rate,
+            batch_size=batch_size
+        )
+        
+        print(f"Interpreter: Finished training model '{model_name}'.")
+        return history
 
     def visit_EvaluateStatement(self, node: neuro_ast.EvaluateStatement):
         model_name = node.model_name
@@ -195,3 +260,58 @@ class NeuroInterpreter:
     def visit_StringLiteral(self, node: neuro_ast.StringLiteral):
         """Handles string literals."""
         return node.value 
+
+    def visit_FunctionCall(self, node: neuro_ast.FunctionCall):
+        """Handles calls to built-in functions like load_matrix() or print()."""
+        func_name = node.func_name
+        print(f"Visiting FunctionCall: {func_name}")
+
+        if func_name not in self.functions:
+            raise NeuroNameError(f"Function '{func_name}' is not defined.")
+
+        # Evaluate arguments *before* calling the function
+        evaluated_args = [self.visit(arg) for arg in node.args]
+        print(f"  Evaluated args: {evaluated_args}")
+
+        # Call the corresponding Python function
+        target_function = self.functions[func_name]
+        
+        # Call the internal function (_load_matrix_function expects the AST node)
+        # TODO: Standardize built-in function signatures - some might want evaluated args, others the raw AST node
+        if func_name == 'load_matrix':
+             if len(node.args) != 1:
+                  raise NeuroTypeError(f"load_matrix() takes exactly 1 argument (filepath), got {len(node.args)}")
+             # Pass the StringLiteral AST node directly as expected by _load_matrix_function
+             return target_function(node.args[0]) 
+        else:
+             # Assume other functions want evaluated arguments
+             return target_function(*evaluated_args)
+
+    # --- Built-in Function Implementations ---
+    def _print_function(self, *args):
+        """Implementation of the built-in print function."""
+        print("Built-in print:", *args) # Add prefix for clarity
+        return None # Print usually doesn't return a value
+        
+    def _load_matrix_function(self, filepath_node):
+        """Implementation of the built-in load_matrix function."""
+        # Expecting a StringLiteral node for the filepath
+        if not isinstance(filepath_node, neuro_ast.StringLiteral):
+             raise NeuroTypeError(f"load_matrix expects a string filepath argument, got AST node {type(filepath_node)}")
+             
+        filepath = filepath_node.value
+        print(f"Interpreter: Loading matrix from '{filepath}'...")
+        try:
+            matrix = NeuroMatrix()
+            matrix.load(filepath) # Use the existing load method
+            print(f"Interpreter: Successfully loaded matrix '{filepath}'")
+            return matrix # Return the loaded NeuroMatrix object
+        except FileNotFoundError:
+            # Convert FileNotFoundError to a NeuroError the user might see
+            raise NeuroError(f"Data file not found: '{filepath}'") 
+        except NeuroDataError as e:
+             # Propagate NeuroDataError
+             raise e
+        except Exception as e:
+             # Catch other potential errors during loading
+             raise NeuroError(f"Failed to load matrix '{filepath}': {e}") 

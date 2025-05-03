@@ -105,7 +105,7 @@ class NeuroParser:
         return neuro_ast.AssignmentStatement(target=target, value=value)
 
     def _parse_expression(self):
-        """ Parses an expression (e.g., function call, literal). """
+        """ Parses an expression (e.g., function call, literal, model def). """
         token = self._current_token()
         
         # Model Definition: NeuralNetwork(...) { ... }
@@ -120,7 +120,10 @@ class NeuroParser:
         # Evaluate call (RHS of assignment): model.evaluate(...)
         elif token.type == 'IDENTIFIER' and self._peek_token().type == 'DOT' and self._peek_token(2).value == 'evaluate':
              return self._parse_method_call_expression() # Parse as an expression
-        # Literals (can add later if needed directly in expressions)
+        # General Function Call: IDENTIFIER(...)
+        elif token.type == 'IDENTIFIER' and self._peek_token().type == 'LPAREN':
+            return self._parse_general_function_call()
+        # Literals
         elif token.type == 'NUMBER':
             self._advance()
             return neuro_ast.NumberLiteral(value=token.value)
@@ -228,6 +231,29 @@ class NeuroParser:
                 else:
                     raise self._syntax_error("Expected ',' or ')' after parameter value")
         return params
+
+    def _parse_general_function_call(self):
+        """ Parses: function_name(arg1, arg2, ...) """
+        func_name_token = self._expect('IDENTIFIER', "Expected function name")
+        func_name = func_name_token.value
+        self._expect('LPAREN', "Expected '(' to start function arguments")
+        
+        args = []
+        if self._current_token().type != 'RPAREN':
+            while True:
+                # Arguments are expressions themselves
+                arg_expr = self._parse_expression()
+                args.append(arg_expr)
+                
+                if self._current_token().type == 'COMMA':
+                    self._advance()
+                elif self._current_token().type == 'RPAREN':
+                    break
+                else:
+                    raise self._syntax_error("Expected ',' or ')' after function argument")
+        
+        self._expect('RPAREN', "Expected ')' to end function arguments")
+        return neuro_ast.FunctionCall(func_name=func_name, args=args)
 
     # --- Helper methods for parsing --- 
     def _current_token(self):

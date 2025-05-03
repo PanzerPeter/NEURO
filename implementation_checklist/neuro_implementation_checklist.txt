@@ -85,4 +85,5 @@
 [x] Implement basic NeuralNetwork class with PyTorch backend
 [x] Implement Dense layer with activation functions
 [x] Implement basic data handling with NeuroMatrix format
-[x] Implement loss, optimizer, and basic training loop 
+[x] Implement loss, optimizer, and basic training loop
+[x] Simple data loading 
