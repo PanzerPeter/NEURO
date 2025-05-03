@@ -1,0 +1,14 @@
+# Add project dependencies here
+# Example:
+# numpy>=1.20.0
+
+# Core dependencies (Based on README/idea)
+torch>=2.0.0 # Or a specific version
+
+# Testing
+pytest>=7.0.0 # Added for testing framework
+
+# Development dependencies
+black>=22.0.0
+flake8>=4.0.0
+mypy>=1.0.0
