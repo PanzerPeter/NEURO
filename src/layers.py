@@ -51,3 +51,20 @@ class Conv2dLayer(Layer):
         self.padding = padding
         self.activation_name = activation
         # Actual nn.Conv2d layer will be created in the NeuralNetwork model 
+
+class BatchNormLayer(Layer):
+    """Represents a Batch Normalization layer."""
+    def __init__(self, momentum=0.1, eps=1e-5, dim=None): # dim can be used to distinguish 1D/2D
+        super().__init__()
+        self.momentum = momentum
+        self.eps = eps
+        self.dim = dim # Store dimension (e.g., 1 for Dense, 2 for Conv2D)
+        # Actual nn.BatchNorm1d/2d created in NeuralNetwork model
+
+class FlattenLayer(Layer):
+    """Represents a Flatten layer."""
+    def __init__(self, start_dim=1, end_dim=-1):
+        super().__init__()
+        self.start_dim = start_dim
+        self.end_dim = end_dim
+        # Actual nn.Flatten created in NeuralNetwork model 

@@ -45,8 +45,6 @@ tests/
 # NEURO specific
 src/parser.out
 src/parsetab.py
-*.nrm
-!examples/*.nrm
 *.pt
 logs/
 checkpoints/

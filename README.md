@@ -1,6 +1,6 @@
 # NEURO: Neural Network Domain-Specific Language
 
-NEURO is a powerful domain-specific language (DSL) designed for creating, training, and evaluating neural networks with a clean and intuitive syntax. Built on top of PyTorch, it combines the flexibility of a high-level language with the performance of modern deep learning frameworks.
+NEURO is a domain-specific language (DSL) designed for creating, training, and evaluating neural networks with a clean and intuitive syntax. Built on top of PyTorch, it combines the flexibility of a high-level language with the performance of modern deep learning frameworks.
 
 > ⚠️ **ALPHA VERSION WARNING**
 >
@@ -8,113 +8,133 @@ NEURO is a powerful domain-specific language (DSL) designed for creating, traini
 > - The API may change without notice
 > - Features might be incomplete or have bugs
 > - Production use is NOT recommended
-> - No warranty or liability is provided (see LICENSE)
+> - No warranty or liability is provided (see LICENSE or `pyproject.toml`)
 >
 > **USE AT YOUR OWN RISK**
 
-## Features
+## Features (Current Implementation - Alpha)
 
-- 🧠 **Intuitive Neural Network Creation**: Define neural networks using a simple, declarative syntax
-- 🚀 **PyTorch Integration**: Leverages PyTorch's powerful backend for optimal performance
-- 📊 **Built-in Data Handling**: Efficient data management with the NeuroMatrix format
-- 🔧 **Flexible Architecture**: Support for various neural network architectures including:
-  - Feed-forward Neural Networks
-  - Convolutional Neural Networks (CNN)
-  - Recurrent Neural Networks (RNN, LSTM, GRU)
-  - Attention Mechanisms
-  - Residual Connections
-- 🎯 **Advanced Training Features**:
-  - Label Smoothing
-  - Gradient Clipping
-  - Learning Rate Scheduling
-  - Teacher Forcing
-  - Beam Search Decoding
+- 🧠 **Declarative Neural Network Definition**: Define network architectures using a dedicated syntax.
+- 🚀 **PyTorch Backend**: Leverages PyTorch for network construction and training.
+- 📊 **Data Handling**: Basic data loading via `NeuroMatrix` YAML format and `load_matrix` function.
+- 🧩 **Core Layers**: 
+  - `Dense` (Fully Connected)
+  - `Conv2D` (2D Convolution)
+  - `Flatten`
+  - `BatchNorm` (Infers 1D/2D from context, uses `LazyBatchNorm1d` / `BatchNorm2d`)
+- ✨ **Activations**: `ReLU`, `Sigmoid`, `Tanh`, `Softmax` (applied within layers).
+- 📉 **Loss Functions**: `BCELoss`, `MSELoss`, `CrossEntropyLoss` (configured via `Loss(...)` assignment).
+- ⚙️ **Optimizers**: `Adam`, `SGD`, `RMSprop` (configured via `Optimizer(...)` assignment).
+- 💪 **Basic Training Loop**: `model.train(data, ...)` with support for epochs, batch size, and optional validation data.
+- 📝 **Model Saving/Loading**: Basic checkpointing (`model.save(...)`) and loading (`model.load(...)`) - *Note: Loading currently requires manual model re-definition before loading weights.*
+- ↔️ **Tuple Assignment**: Assign results from functions like `data.split()` to multiple variables.
+
+_(Many advanced features listed previously, like RNNs, attention, label smoothing, etc., are planned but not yet implemented)._
 
 ## Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/NEURO.git
+git clone https://github.com/PanzerPeter/NEURO.git # Replace with your URL if different
 cd NEURO
 
-# Create and activate virtual environment (optional but recommended)
+# Create and activate virtual environment (recommended)
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install dependencies
-pip install -r requirements.txt
+# Install NEURO and its dependencies in editable mode
+pip install -e .
+
+# To install development tools (for testing, linting):
+pip install -e ".[dev]"
 ```
 
 ## Quick Start
 
-Here's a simple example of creating and training a neural network using NEURO:
+Here's a simple example using the current NEURO syntax:
 
 ```neuro
+# Load data from a .nrm file (YAML format)
+data = load_matrix("path/to/your_data.nrm"); 
+
+# (Optional) Split data
+# train_data, val_data = data.split(train_frac=0.8);
+
 # Create a simple neural network for binary classification
-model = NeuralNetwork(input_size=3, output_size=1) {      
-    Dense(units=64, activation="relu")
-    Dense(units=32, activation="relu")
-    Dense(units=1, activation="sigmoid")
-}
+# Note: input_size/output_size in NeuralNetwork() are currently informational
+my_model = NeuralNetwork(input_size=10, output_size=1) {      
+    Dense(units=64, activation="relu"); # Layer definitions require semicolons
+    Dense(units=32, activation="relu");
+    Dense(units=1, activation="sigmoid");
+};
 
-# Configure loss function and optimizer
-loss(type="bce")
-optimizer(type="adam", learning_rate=0.001)
+# Configure loss function and optimizer via assignment
+# These configure the *next* training run
+loss_cfg = Loss(type="bce");
+opt_cfg = Optimizer(type="adam", learning_rate=0.001);
 
-# Train the model
-model.train(data, epochs=100)
+# Train the model using the loaded data and configured loss/optimizer
+# Training parameters like epochs are passed directly to train()
+# The variables loss_cfg and opt_cfg are not used directly here;
+# the interpreter uses the *last defined* Loss/Optimizer config.
+train_history = my_model.train(data=data, epochs=50, batch_size=16);
 
-# Evaluate the model
-accuracy = model.evaluate(test_data)
+# Evaluate the model (Evaluation logic might be placeholder)
+# test_data = load_matrix("path/to/test_data.nrm"); 
+# results = my_model.evaluate(data=test_data);
+
+# Save the trained model (weights and metadata)
+# my_model.save("my_trained_model.pt"); 
+
+print("Training complete."); # Example of using built-in print
+
 ```
 
 ## Project Structure
 
 ```
 NEURO/
-├── src/
+├── src/                 # Source code (lexer, parser, interpreter, models, etc.)
 │   ├── __init__.py
-│   ├── interpreter.py    # Core interpreter implementation
-│   ├── parser.py        # NEURO language parser
-│   ├── matrix.py        # Data handling implementation
-│   └── neuro.py         # Main entry point
-├── examples/            # Example NEURO programs
-├── docs/               # Documentation
-├── LICENSE              # License
-└── requirements.txt    # Project dependencies
+│   ├── neuro.py         # Main script logic (used by entry point)
+│   ├── parser.py
+│   ├── interpreter.py
+│   ├── neuro_ast.py
+│   ├── models.py
+│   ├── layers.py 
+│   ├── losses.py
+│   ├── optimizers.py
+│   ├── matrix.py
+│   └── errors.py
+├── examples/            # Example NEURO programs (.nr files)
+├── tests/               # Pytest tests
+├── docs/                # Documentation files (Markdown)
+├── .gitignore
+├── LICENSE              # License file (GPL-3.0)
+├── pyproject.toml       # Build configuration and dependencies
+└── README.md            # This file
 ```
 
-## Advanced Features
+## Data Format (`.nrm` files)
 
-### Label Smoothing
+NEURO uses a YAML-based format (`.nrm`) managed by the `NeuroMatrix` class. Files should contain `metadata` and `data` sections.
 
-```neuro
-# Enable label smoothing with custom smoothing factor
-loss(type="cross_entropy", smoothing=0.1)
+```yaml
+metadata:
+  description: "Simple dataset for demonstration"
+  num_samples: 5
+  input_features: 3
+  output_features: 1
+
+data:
+  - input: [1.0, 2.0, 3.0]
+    output: [1]
+  - input: [4.0, 5.0, 6.0]
+    output: [0]
+  # ... more data points
 ```
 
-### Gradient Clipping
-
-```neuro
-# Set maximum gradient norm
-model.clip_gradients(max_norm=1.0)
-```
-
-### Learning Rate Scheduling
-
-```neuro
-# Train with cosine annealing scheduler
-model.train(data, epochs=100, scheduler="cosine", warmup_steps=10)
-```
-
-## Data Format
-
-NEURO uses the NeuroMatrix format for efficient data handling:
-
-```python
-matrix = NeuroMatrix()
-matrix.add_data_point(input_data=[1.0, 2.0, 3.0], output_data=[1])
-```
+Use the built-in `load_matrix("path/to/file.nrm")` function within your `.nr` scripts to load data.
 
 ## Contributing
 
@@ -122,26 +142,22 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+3. Make your changes
+4. Install dev tools (`pip install -e ".[dev]"`) and run tests (`pytest -v`)
+5. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+6. Push to the branch (`git push origin feature/AmazingFeature`)
+7. Open a Pull Request
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 (GPL-3.0) - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GNU General Public License v3.0 or later (GPL-3.0-or-later) - see the [LICENSE](LICENSE) file for details.
 
-When using this software, you must:
-- Include the original copyright notice and license
-- State significant changes made to the software
-- Make source code available when distributing
-- Include the following attribution in documentation or about section:
-  "Based on NEURO (https://github.com/PanzerPeter/NEURO)"
+When using this software, please adhere to the terms of the GPL-3.0 license, including providing attribution: "Based on NEURO (https://github.com/PanzerPeter/NEURO)".
 
 ## Acknowledgments
 
 - Built with [PyTorch](https://pytorch.org/)
-- Inspired by modern deep learning frameworks and DSLs
 
 ## Contact
 
-For questions and support, please open an issue in the GitHub repository. 
+For questions and support, please open an issue in the GitHub repository: [https://github.com/PanzerPeter/NEURO/issues](https://github.com/PanzerPeter/NEURO/issues) 

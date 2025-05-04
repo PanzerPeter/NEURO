@@ -1,0 +1,21 @@
+metadata:
+  description: "Dummy image-like dataset (e.g., 1x8x8 -> one-hot encoding)"
+  num_samples: 6
+  input_features: [1, 8, 8] # Example: 1 channel, 8x8 image
+  output_features: 3 # Example: 3 classes
+
+data:
+  # Simplified representation - real image data would be larger/different
+  # Assuming input represents flattened 1x8x8 = 64 features
+  - input: [0.1]*64 # Placeholder input features
+    output: [1, 0, 0] # One-hot encoded class 0
+  - input: [0.2]*64
+    output: [0, 1, 0] # One-hot encoded class 1
+  - input: [0.3]*64
+    output: [0, 0, 1] # One-hot encoded class 2
+  - input: [0.4]*64
+    output: [1, 0, 0]
+  - input: [0.5]*64
+    output: [0, 1, 0]
+  - input: [0.6]*64
+    output: [0, 0, 1] 

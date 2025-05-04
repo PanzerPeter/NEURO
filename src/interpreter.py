@@ -46,6 +46,9 @@ class NeuroInterpreter:
         method_name = f'visit_{node.__class__.__name__}'
         visitor = getattr(self, method_name, self.generic_visit)
         # print(f"Visiting {node.__class__.__name__} using {visitor.__name__}") # Debugging
+        # Handle potential None nodes if parser allows them (e.g., empty statements)
+        if node is None:
+             return None
         return visitor(node)
 
     def generic_visit(self, node):
@@ -62,33 +65,61 @@ class NeuroInterpreter:
         return last_result # Return result of the last statement
 
     def visit_AssignmentStatement(self, node: neuro_ast.AssignmentStatement):
-        """Handles assignment statements like 'var = expression'"""
-        target_name = node.target.name
-        print(f"Assigning to variable: {target_name}")
+        """Handles assignment statements like 'var = expression' or 'v1, v2 = expression'"""
+        # target_name = node.target.name
+        # print(f"Assigning to variable: {target_name}")
         
         # Evaluate the right-hand side expression first
-        value = self.visit(node.value) 
+        rhs_value = self.visit(node.value) 
         
-        # Handle specific definition types that configure things rather than return direct values
-        if isinstance(value, dict) and value.get('type') == 'ModelDefinition':
-            model_params = value['params']
-            model_layers = value['layers']
-            model_object = NeuralNetwork(name=value['name'], params=model_params, layer_nodes=model_layers)
-            self.variables[target_name] = model_object
-            print(f"  Stored NeuralNetwork object '{target_name}' in variables.")
-        elif isinstance(value, dict) and value.get('type') == 'LossDefinition':
-             print(f"Configuring loss: {value['params']}")
-             self.config['loss'] = value['params'] 
-             self.variables[target_name] = None # Assign None to the variable 'loss' itself
-        elif isinstance(value, dict) and value.get('type') == 'OptimizerDefinition':
-            print(f"Configuring optimizer: {value['params']}")
-            self.config['optimizer'] = value['params'] 
-            self.variables[target_name] = None # Assign None to the variable 'optimizer' itself
+        # Check if it's tuple assignment or single assignment
+        if isinstance(node.target, list): 
+            # Tuple Assignment
+            targets = node.target
+            target_names = [t.name for t in targets]
+            print(f"Assigning to multiple variables: {', '.join(target_names)}")
+            
+            # Check if RHS value is a sequence of the correct length
+            if not isinstance(rhs_value, (list, tuple)):
+                 raise NeuroTypeError(f"Cannot unpack non-sequence value of type {type(rhs_value).__name__} into multiple targets ({len(targets)} targets)")
+            if len(rhs_value) != len(targets):
+                 raise NeuroTypeError(f"Value mismatch: Expected {len(targets)} values to unpack, but got {len(rhs_value)} from expression")
+                 
+            # Perform assignment
+            for i, target_node in enumerate(targets):
+                var_name = target_node.name
+                assigned_value = rhs_value[i]
+                self.variables[var_name] = assigned_value
+                print(f"  Assigned value of type {type(assigned_value).__name__} to variable '{var_name}'.")
+                
+        elif isinstance(node.target, neuro_ast.Identifier):
+            # Single Assignment
+            target_name = node.target.name
+            print(f"Assigning to variable: {target_name}")
+            
+            # Handle specific definition types that configure things
+            if isinstance(rhs_value, dict) and rhs_value.get('type') == 'ModelDefinition':
+                model_params = rhs_value['params']
+                model_layers = rhs_value['layers']
+                # Name should have been set by parser here
+                model_object = NeuralNetwork(name=rhs_value['name'], params=model_params, layer_nodes=model_layers)
+                self.variables[target_name] = model_object
+                print(f"  Stored NeuralNetwork object '{target_name}' in variables.")
+            elif isinstance(rhs_value, dict) and rhs_value.get('type') == 'LossDefinition':
+                 print(f"Configuring loss: {rhs_value['params']}")
+                 self.config['loss'] = rhs_value['params'] 
+                 self.variables[target_name] = None # Assign None to the variable 'loss' itself
+            elif isinstance(rhs_value, dict) and rhs_value.get('type') == 'OptimizerDefinition':
+                print(f"Configuring optimizer: {rhs_value['params']}")
+                self.config['optimizer'] = rhs_value['params'] 
+                self.variables[target_name] = None # Assign None to the variable 'optimizer' itself
+            else:
+                # For all other expressions (literals, function calls, etc.), store the value directly.
+                self.variables[target_name] = rhs_value
+                print(f"  Stored value of type {type(rhs_value).__name__} for variable '{target_name}'.")
         else:
-            # For all other expressions (literals, function calls, etc.), 
-            # the 'value' IS the result we want to store.
-            self.variables[target_name] = value
-            print(f"  Stored value of type {type(value).__name__} for variable '{target_name}'.")
+            # Should not happen if parser creates correct AST
+            raise NeuroInterpreterError(f"Unexpected target type in AssignmentStatement: {type(node.target)}")
             
         return None # Assignment statement itself doesn't return a value
 
@@ -177,6 +208,30 @@ class NeuroInterpreter:
 
         print(f"  Data source: {data_source_name} (Loaded {len(X)} samples)")
         
+        # --- Get Optional Validation Data ---
+        validation_data_name = node.params.get('validation_data') # Check for validation_data param
+        X_val, y_val = None, None
+        if validation_data_name:
+            if not isinstance(validation_data_name, str):
+                raise NeuroTypeError(f"'validation_data' parameter for training '{model_name}' must be a string variable name, got {type(validation_data_name)}")
+            if validation_data_name not in self.variables:
+                raise NeuroNameError(f"Validation data variable '{validation_data_name}' is not defined.")
+                
+            val_data_object = self.variables.get(validation_data_name)
+            if not isinstance(val_data_object, NeuroMatrix):
+                raise NeuroTypeError(f"Validation data variable '{validation_data_name}' is not a NeuroMatrix object (found {type(val_data_object)})." )
+                
+            try:
+                X_val = torch.tensor([item['input'] for item in val_data_object.data], dtype=torch.float32)
+                y_val = torch.tensor([item['output'] for item in val_data_object.data], dtype=torch.float32)
+                if len(y_val.shape) == 1:
+                    y_val = y_val.unsqueeze(1)
+                print(f"  Validation data source: {validation_data_name} (Loaded {len(X_val)} samples)")
+            except (KeyError, TypeError, ValueError) as e:
+                raise NeuroDataError(f"Error processing validation data from '{validation_data_name}': {e}")
+        else:
+             print("  No validation data provided.")
+
         # --- Get Loss/Optimizer Config from Interpreter State ---
         loss_config = self.config.get('loss')
         optimizer_config = self.config.get('optimizer')
@@ -215,7 +270,9 @@ class NeuroInterpreter:
             optimizer_name=optimizer_name,
             epochs=epochs, 
             learning_rate=learning_rate,
-            batch_size=batch_size
+            batch_size=batch_size,
+            X_val=X_val, # Pass validation data
+            y_val=y_val  # Pass validation data
         )
         
         print(f"Interpreter: Finished training model '{model_name}'.")
@@ -223,8 +280,10 @@ class NeuroInterpreter:
 
     def visit_EvaluateStatement(self, node: neuro_ast.EvaluateStatement):
         model_name = node.model_name
-        data_source_name = node.data_source.name if isinstance(node.data_source, neuro_ast.Identifier) else str(node.data_source)
-        
+        if not isinstance(node.data_source, neuro_ast.Identifier):
+            raise NeuroTypeError(f"Data source for evaluate must be an identifier, got {type(node.data_source)}")
+        data_source_name = node.data_source.name
+
         print(f"Initiating evaluation for model '{model_name}'")
         print(f"  Data source: {data_source_name}")
         if model_name not in self.variables:
@@ -286,6 +345,75 @@ class NeuroInterpreter:
         else:
              # Assume other functions want evaluated arguments
              return target_function(*evaluated_args)
+
+    def visit_SaveStatement(self, node: neuro_ast.SaveStatement):
+        """Handles 'model.save("filepath")' statement."""
+        model_name = node.model_name
+        filepath_node = node.filepath
+
+        # Ensure filepath is a string literal
+        if not isinstance(filepath_node, neuro_ast.StringLiteral):
+            # This check might be redundant if parser guarantees it
+            raise NeuroTypeError(f"save() requires a string literal filepath, got {type(filepath_node)}")
+        filepath = filepath_node.value
+
+        print(f"Interpreter: Initiating save for model '{model_name}' to '{filepath}'")
+
+        # --- Get Model ---
+        if model_name not in self.variables:
+            raise NeuroNameError(f"Variable '{model_name}' is not defined.")
+        model_object = self.variables.get(model_name)
+        if not isinstance(model_object, NeuralNetwork):
+            raise NeuroTypeError(f"Variable '{model_name}' is not a saveable NeuralNetwork object (found {type(model_object)})." )
+
+        # --- Call the actual save method ---
+        try:
+            model_object.save(filepath)
+            print(f"Interpreter: Successfully saved model '{model_name}' to '{filepath}'.")
+        except Exception as e:
+            # Catch potential errors during save (e.g., file system issues)
+            raise NeuroInterpreterError(f"Failed to save model '{model_name}' to '{filepath}': {e}")
+
+        return None # Save statement doesn't return a value
+
+    def visit_MethodCall(self, node: neuro_ast.MethodCall):
+        """Handles general method calls like data.split() used as expressions."""
+        object_name = node.object_name
+        method_name = node.method_name
+        args_dict = node.args # This is the dictionary of params from the parser
+
+        print(f"Visiting MethodCall: {object_name}.{method_name}(...)")
+
+        # --- Get Object ---
+        if object_name not in self.variables:
+            raise NeuroNameError(f"Variable '{object_name}' is not defined.")
+        obj = self.variables.get(object_name)
+
+        # --- Get Method --- 
+        if not hasattr(obj, method_name):
+            raise NeuroInterpreterError(f"Object '{object_name}' of type {type(obj).__name__} has no method '{method_name}'")
+        method = getattr(obj, method_name)
+        if not callable(method):
+            raise NeuroInterpreterError(f"Attribute '{method_name}' of object '{object_name}' is not callable")
+
+        # --- Prepare Arguments ---
+        # The parser stores key-value pairs directly in args for MethodCall (like split)
+        # We need to evaluate the *values* in the args dictionary if they are AST nodes
+        evaluated_args = {}
+        for key, value_node in args_dict.items():
+            # Value could be Literal, Identifier, etc.
+             evaluated_args[key] = self.visit(value_node)
+
+        print(f"  Calling {method_name} on {type(obj).__name__} with evaluated args: {evaluated_args}")
+
+        # --- Call Method --- 
+        try:
+            result = method(**evaluated_args) # Use keyword arguments
+            print(f"  Method call {object_name}.{method_name} returned: {type(result)}")
+            return result
+        except Exception as e:
+            # Catch errors during the actual method execution
+            raise NeuroInterpreterError(f"Error executing method '{object_name}.{method_name}': {e}")
 
     # --- Built-in Function Implementations ---
     def _print_function(self, *args):

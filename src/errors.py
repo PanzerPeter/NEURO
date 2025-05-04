@@ -2,20 +2,30 @@
 
 class NeuroError(Exception):
     """Base class for all NEURO-specific errors."""
-    def __init__(self, message, line=None, column=None):
+    def __init__(self, message, line=None, column=None, source_line=None):
         super().__init__(message)
         self.message = message
         self.line = line
         self.column = column
+        self.source_line = source_line # Store the source line content
 
     def __str__(self):
         location = ""
         if self.line is not None:
-            location += f"[Line {self.line}" 
+            location += f"[Line {self.line}"
             if self.column is not None:
-                location += f", Col {self.column}" 
+                location += f", Col {self.column}"
             location += "] "
-        return f"{location}{type(self).__name__}: {self.message}"
+        
+        context = ""
+        if self.source_line:
+            context += f"\n> {self.source_line.strip()}"
+            if self.column is not None:
+                 # Add a simple pointer to the column (adjusting for 0-based column and '> ' prefix)
+                 pointer_offset = self.column - 1 + 2 
+                 context += f"\n  {' ' * pointer_offset}^"
+
+        return f"{location}{type(self).__name__}: {self.message}{context}"
 
 class NeuroSyntaxError(NeuroError):
     """Error raised during lexing or parsing."""

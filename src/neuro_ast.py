@@ -53,12 +53,27 @@ class EvaluateStatement(ASTNode):
     """Node representing 'model.evaluate(...)'"""
     def __init__(self, model_name, data_source):
         self.model_name = model_name    # Identifier (string)
-        self.data_source = data_source # Identifier or Literal
+        self.data_source = data_source # Identifier or Literal (string path?)
+
+class MethodCall(ASTNode):
+    """Node representing a general method call like 'object.method(...)' (used as expression)"""
+    def __init__(self, object_name, method_name, args):
+        self.object_name = object_name # Identifier (string)
+        self.method_name = method_name # Identifier (string)
+        self.args = args             # Dictionary of arguments (parsed key-value pairs)
+
+class SaveStatement(ASTNode):
+    """Node representing 'model.save("filepath")'"""
+    def __init__(self, model_name, filepath):
+        self.model_name = model_name # Identifier (string)
+        self.filepath = filepath   # StringLiteral node
 
 class AssignmentStatement(ASTNode):
-    """Node representing 'target = value'"""
+    """Node representing 'target = value' or 'target1, target2 = value'"""
     def __init__(self, target, value):
-        self.target = target # Identifier node
+        # self.target = target # Identifier node
+        # Target can be a single Identifier or a list of Identifiers for tuple assignment
+        self.target: Identifier | list[Identifier] = target 
         self.value = value   # Expression or Call node
 
 # --- Expressions (if needed later) ---

@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neuro-lang"
+version = "0.1.0"
+authors = [
+  { name="Your Name", email="you@example.com" }, # TODO: Update author info
+]
+description = "NEURO Language Interpreter"
+readme = "README.md" # Optional: if you have a README
+requires-python = ">=3.8"
+license = {text = "GPL-3.0-or-later"} # Explicitly state GPL-3.0, matching README
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)", # Classifier for GPL
+    "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha", # Add development status
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    # List your project's dependencies here, e.g.:
+    # "numpy>=1.20.0", 
+    "PyYAML>=5.4", # For matrix loading
+    "torch>=1.9.0" # Added torch dependency (adjust version as needed)
+]
+
+[project.scripts]
+neuro = "src.neuro:main"
+
+# Optional Dependencies (for development)
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black>=22.0.0",
+    "flake8>=4.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.urls] # Optional
+"Homepage" = "https://github.com/PanzerPeter/NEURO"
+"Bug Tracker" = "https://github.com/PanzerPeter/NEURO/issues"

@@ -16,7 +16,7 @@
 [x] Convolutional layers (Conv2D)
 [ ] Pooling layers (MaxPool, AvgPool)
 [ ] Recurrent layers (LSTM, GRU)
-[ ] Utility layers (Dropout, BatchNorm, Flatten)
+[x] Utility layers (Dropout, BatchNorm, Flatten)
 [x] Activation functions (ReLU, Sigmoid, Tanh, Softmax)
 [ ] Custom layer support
 [ ] Model branching
@@ -28,14 +28,14 @@
 [ ] Callbacks system (@before_training, @after_epoch, @after_batch)
 [ ] Metrics tracking (accuracy, precision, recall, f1)
 [ ] Early stopping functionality
-[ ] Checkpoint saving/loading
+[x] Checkpoint saving/loading
 [x] Training history recording
 
 ## Data Handling
 [x] NeuroMatrix (.nrm) format implementation
 [ ] Data loading functionality
 [ ] Data preprocessing methods (normalize, handle_missing)
-[ ] Data splitting (train/val/test)
+[x] Data splitting (train/val/test)
 [x] Batch creation
 [ ] Data augmentation
 
