@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "neuro-lang"
 version = "0.1.0"
 authors = [
-  { name="Your Name", email="you@example.com" }, # TODO: Update author info
+  { name="PanzerPeter"},
 ]
 description = "NEURO Language Interpreter"
 readme = "README.md" # Optional: if you have a README
