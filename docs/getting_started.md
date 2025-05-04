@@ -26,16 +26,16 @@ This makes the `neuro` command available in your environment.
 Create a file named `hello.nr` with the following content:
 
 ```neuro
-# hello.nr: Define a simple model and print a message
+// hello.nr: Define a simple model and print a message
 
-# Define a basic neural network (won't be trained here)
-simple_model = NeuralNetwork() { # Parameters like input/output size are optional
+// Define a basic neural network (won't be trained here)
+simple_model = NeuralNetwork() { // Parameters like input/output size are optional
     Dense(units=10, activation="relu");
     Dense(units=1, activation="sigmoid");
 };
 
 print("NEURO model defined successfully!");
-print("Model structure (placeholder):", simple_model);
+// print("Model structure (placeholder):", simple_model); // Printing model objects directly might give limited info
 ```
 
 ## 3. Running the Script

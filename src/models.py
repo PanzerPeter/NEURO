@@ -5,12 +5,8 @@ from collections import OrderedDict
 import yaml # For potentially saving/loading metadata alongside model state
 import os # For path manipulation in save/load
 from src.errors import NeuroTypeError, NeuroSyntaxError # Import the custom error type
-from .losses import BCELoss # Assuming losses.py is in the same directory
-# We might need more losses later
-# from torch.nn import MSELoss 
-from .optimizers import Adam # Assuming optimizers.py is in the same directory
-# We might need more optimizers later
-# from torch.optim import SGD
+from .losses import BCELoss
+from .optimizers import Adam
 
 # Placeholder for layer mapping (will be expanded)
 # LAYER_REGISTRY = {

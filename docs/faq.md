@@ -10,11 +10,11 @@ A: Once installed, use the command `neuro run path/to/your_script.nr` in your te
 
 **Q: What features are currently implemented?**
 
-A: NEURO is in Alpha. Core features include defining models (Dense, Conv2D, BatchNorm, Flatten layers), loading data (`load_matrix`), configuring loss/optimizers (`Loss`, `Optimizer`), and basic training (`model.train`). See the "Features" section in `README.md` for a more detailed list.
+A: NEURO is in Alpha. Core features include defining models (Dense, Conv2D, BatchNorm, Flatten, MaxPool2D, AvgPool2D, Dropout layers), loading data (`load_matrix`), splitting data (`.split()`), configuring loss/optimizers (`Loss`, `Optimizer`), model training (`model.train`), evaluation (`.evaluate`), and saving (`.save`). See the "Features" section in `README.md` and `docs/language_guide.md` for a more detailed list and syntax.
 
-**Q: Why doesn't `model.load("file.pt")` automatically rebuild my model?**
+**Q: Why doesn't `NeuralNetwork.load("file.pth")` automatically rebuild my model?**
 
-A: Currently, loading only restores the model *weights* (state dictionary). It cannot yet reconstruct the model architecture from the saved file. You must define the exact same model architecture in your `.nr` script *before* attempting to load weights into it. Full model reconstruction is planned for the future.
+A: Currently, loading only restores the model *weights* (state dictionary). It cannot reconstruct the model architecture from the saved file. You must define the exact same model architecture in your `.nr` script *before* calling `NeuralNetwork.load("file.pth")` to load weights into it. Full model reconstruction is planned for the future.
 
 **Q: How are loss functions and optimizers configured?**
 

@@ -7,8 +7,8 @@ This guide describes the syntax and core features of the NEURO language as curre
 A NEURO program (`.nr` file) consists of a sequence of statements. Most statements end with a semicolon `;`.
 
 ```neuro
-// Comments start with #
-# This is a comment
+// Comments start with //
+// This is a comment
 
 // Variable assignment
 my_variable = 10;
@@ -26,17 +26,26 @@ my_model = NeuralNetwork(input_size=10, output_size=1) {
 loss_config = Loss(type="bce");
 opt_config = Optimizer(type="adam", learning_rate=0.001);
 
+// Data Loading
+matrix_data = load_matrix("my_data.nrm");
+
+// Data Splitting
+train_set, val_set, test_set = matrix_data.split(train_frac=0.7, val_frac=0.15, test_frac=0.15);
+
 // Model training call (ends with ;)
-my_model.train(data=my_data, epochs=10);
+my_model.train(data=train_set, epochs=10, validation_data=val_set);
+
+// Model saving
+my_model.save("saved_model.pth");
 ```
 
 ## Comments
 
-Single-line comments start with `#`.
+Single-line comments start with `//`.
 
 ```neuro
-# This entire line is a comment
-variable = 1; # Comment after code
+// This entire line is a comment
+variable = 1; // Comment after code
 ```
 
 ## Variables and Assignment
@@ -48,23 +57,28 @@ count = 100;
 message = "Processing...";
 data = load_matrix("data.nrm");
 
-# Tuple assignment is supported for functions returning sequences (like data.split)
+# Tuple assignment is supported for functions/methods returning sequences
 data_matrix = load_matrix("my_data.nrm");
-train_set, test_set = data_matrix.split(train_frac=0.75);
+# The split method returns multiple values
+train_set, val_set, test_set = data_matrix.split(train_frac=0.7, val_frac=0.15); # Test frac is inferred
+print("Training set size:", train_set); # Assumes NeuroMatrix has __str__ or __len__
+
+# General tuple assignment
+a, b = some_function_returning_two_values();
 ```
 
 ## Data Types
 
 - **Number**: Integers (`10`) and floating-point numbers (`3.14`).
 - **String**: Double-quoted strings (`"hello"`).
-- **NeuroMatrix**: Represents datasets, loaded via `load_matrix()`. 
-- **NeuralNetwork**: Represents a defined model.
-- **None**: The special value `None` (used implicitly for Loss/Optimizer assignments).
+- **NeuroMatrix**: Represents datasets, loaded via `load_matrix()` or returned by `split()`. It supports methods like `.split()`.
+- **NeuralNetwork**: Represents a defined model. It supports methods like `.train()`, `.evaluate()`, and `.save()`.
+- **None**: The special value `None` (currently used implicitly when assigning Loss/Optimizer configurations).
 
 ## Built-in Functions
 
 - `print(...)`: Prints its arguments to the console.
-- `load_matrix("filepath.nrm")`: Loads data from a `.nrm` (YAML) file into a `NeuroMatrix` object.
+- `load_matrix("filepath.nrm")`: Loads data from a `.nrm` (YAML format) file into a `NeuroMatrix` object. See Data Format section.
 
 ```neuro
 x = 10;
@@ -80,18 +94,21 @@ Models are defined using the `NeuralNetwork` keyword, assigned to a variable. Th
 
 ```neuro
 # input_size/output_size are currently informational metadata
-my_cnn = NeuralNetwork(input_size=784, output_size=10) {
+my_cnn = NeuralNetwork(input_size=(1, 28, 28), output_size=10) { # Example input size for image data
     # Layers are defined sequentially
     # Each layer definition must end with a semicolon
-    Conv2D(out_channels=16, kernel_size=3, padding=1, activation="relu"); # Assumes in_channels if follows another Conv2D
-    BatchNorm(); # Infers dim=2 after Conv2D
-    # MaxPool(); # MaxPool not yet implemented
-    Conv2D(out_channels=32, kernel_size=3, padding=1, activation="relu");
-    BatchNorm(); # Infers dim=2 after Conv2D
+    # First Conv2D requires in_channels
+    Conv2D(in_channels=1, out_channels=16, kernel_size=3, padding=1, activation="relu");
+    BatchNorm(); # Infers dim=2, features=16 after Conv2D
+    MaxPool2D(kernel_size=2, stride=2);
+    Conv2D(out_channels=32, kernel_size=3, padding=1, activation="relu"); # Infers in_channels=16
+    BatchNorm(); # Infers dim=2, features=32
+    AvgPool2D(kernel_size=2, stride=2);
     Flatten();
     Dense(units=128, activation="relu");
-    BatchNorm(); # Infers dim=1 after Dense
-    Dense(units=10, activation="softmax");
+    Dropout(rate=0.5);
+    BatchNorm(); # Infers dim=1 after Dense (uses LazyBatchNorm1d)
+    Dense(units=10, activation="softmax"); # Assuming classification task
 };
 ```
 
@@ -103,33 +120,44 @@ Currently, only `input_size` and `output_size` are recognized as informational p
 
 Layers are defined within the model body `{...}`. Each layer definition must end with a semicolon `;`. Activations are typically specified within the layer's parameters.
 
-- **`Dense(units=..., activation=...)`**: Fully connected layer.
+- **`Dense(units=..., activation=...)`**: Fully connected layer. Uses `LazyLinear` internally, so `input_shape` is not required.
   - `units`: (Required) Number of output neurons.
-  - `activation`: (Optional) String name of activation function (e.g., "relu", "sigmoid").
+  - `activation`: (Optional) String name of activation function (e.g., `"relu"`, `"sigmoid"`).
 
 - **`Conv2D(...)`**: 2D Convolutional layer.
   - `out_channels`: (Required) Number of output channels (filters).
-  - `kernel_size`: (Required) Integer or tuple (e.g., `3` or `(3, 3)`).
+  - `kernel_size`: (Required) Integer or comma-separated string/tuple (e.g., `3` or `"3,3"` or `(3, 3)`).
   - `in_channels`: (Optional) Number of input channels. If omitted, it's inferred from the previous `Conv2D` layer's `out_channels`. **Required for the first Conv2D layer.**
-  - `stride`: (Optional) Integer or tuple (default: `1`).
-  - `padding`: (Optional) Integer or tuple (default: `0`).
+  - `stride`: (Optional) Integer or comma-separated string/tuple (default: `1`).
+  - `padding`: (Optional) Integer or comma-separated string/tuple (default: `0`).
   - `activation`: (Optional) String name of activation function.
 
 - **`BatchNorm(...)`**: Batch Normalization.
   - `momentum`: (Optional) Momentum factor (default: `0.1`).
   - `eps`: (Optional) Epsilon value (default: `1e-5`).
-  - `dim`: (Optional) Explicitly specify `1` or `2`. If omitted, dimension (1D or 2D) is inferred based on the preceding layer (`Dense` -> 1D, `Conv2D` -> 2D). Requires `in_channels` to be set for `dim=2` (usually inferred from preceding `Conv2D`). Uses `LazyBatchNorm1d` or `BatchNorm2d` internally.
+  - `dim`: (Optional) Explicitly specify `1` or `2`. If omitted, dimension (1D or 2D) is inferred based on the preceding layer (`Dense`/`Flatten` -> 1D, `Conv2D`/`Pool` -> 2D). Uses `LazyBatchNorm1d` for 1D and `BatchNorm2d` for 2D (infers features from previous layer).
 
-- **`Flatten(...)`**: Flattens input, typically used between convolutional and dense layers.
-  - `start_dim`: (Optional) First dimension to flatten (default: `1`).
-  - `end_dim`: (Optional) Last dimension to flatten (default: `-1`).
+- **`Flatten(...)`**: Flattens input, typically used between convolutional/pooling and dense layers.
+  - `start_dim`: (Optional) First dimension to flatten (default: `1`, flattens channel, height, width).
+  - `end_dim`: (Optional) Last dimension to flatten (default: `-1`, flattens all dims after `start_dim`).
 
-- **`Dropout(...)`**: (Not shown in example, but likely supported if in `src/models.py` layer parsing logic)
-  - `rate`: (Required) Dropout probability.
+- **`MaxPool2D(...)`**: Applies 2D max pooling.
+  - `kernel_size`: (Required) Integer or comma-separated string/tuple.
+  - `stride`: (Optional) Integer or comma-separated string/tuple (default: same as `kernel_size`).
+  - `padding`: (Optional) Integer or comma-separated string/tuple (default: `0`).
+
+- **`AvgPool2D(...)`**: Applies 2D average pooling.
+   - `kernel_size`: (Required) Integer or comma-separated string/tuple.
+   - `stride`: (Optional) Integer or comma-separated string/tuple (default: same as `kernel_size`).
+   - `padding`: (Optional) Integer or comma-separated string/tuple (default: `0`).
+
+- **`Dropout(...)`**: Applies dropout regularization.
+  - `rate`: (Required) Dropout probability (e.g., `0.5`).
 
 ### Activation Functions
 
-Specify activation as a string parameter (`activation="..."`) within layer definitions. Supported: `"relu"`, `"sigmoid"`, `"tanh"`, `"softmax"`. For `softmax`, an optional `dim` parameter can be added (e.g., `Dense(..., activation="softmax", dim=1)`).
+Specify activation as a string parameter (`activation="..."`) within layer definitions (`Dense`, `Conv2D`). Supported: `"relu"`, `"sigmoid"`, `"tanh"`, `"softmax"`.
+For `softmax`, an optional `dim` parameter can be added to the layer definition (e.g., `Dense(..., activation="softmax", dim=1)`), defaulting to `dim=1`.
 
 ## Loss and Optimizer Configuration
 
@@ -148,22 +176,24 @@ o_cfg = Optimizer(type="sgd", learning_rate=0.01, momentum=0.9); # Configure SGD
 model.train(data=train_data, epochs=20);
 
 # Reconfigure for the next training run
-new_loss = Loss(type="crossentropy");
+new_loss = Loss(type="bce"); # Only BCE is currently implemented
 new_opt = Optimizer(type="adam", learning_rate=0.0005);
 
-# This training run will use CrossEntropy loss and Adam optimizer
+# This training run will use BCE loss and Adam optimizer
 model.train(data=train_data, epochs=10);
 ```
 
 ### `Loss(...)` Parameters
 
-- `type`: (Required) String name of the loss function. Supported: `"bce"` (Binary Cross Entropy), `"mse"` (Mean Squared Error), `"crossentropy"` (Cross Entropy Loss).
+- `type`: (Required) String name of the loss function. Supported: `"bce"` (Binary Cross Entropy).
 
 ### `Optimizer(...)` Parameters
 
-- `type`: (Required) String name of the optimizer. Supported: `"adam"`, `"sgd"`, `"rmsprop"`.
-- `learning_rate`: (Optional) Learning rate (default depends on optimizer, e.g., `0.001` for Adam).
-- Other optimizer-specific parameters (e.g., `betas`, `eps`, `weight_decay` for Adam; `momentum` for SGD) might be supported by the backend but may need explicit implementation in the parser/interpreter logic if not standard `torch.optim` arguments.
+- `type`: (Required) String name of the optimizer. Supported: `"adam"`.
+- `learning_rate`: (Optional) Learning rate (default: `0.001` for Adam).
+- `betas`: (Optional) Tuple for Adam beta parameters (default: `(0.9, 0.999)`). *Syntax for tuple params TBD.*
+- `eps`: (Optional) Epsilon for Adam (default: `1e-8`).
+- `weight_decay`: (Optional) Weight decay for Adam (default: `0`).
 
 ## Model Training
 
@@ -184,46 +214,99 @@ history = my_model.train(
 
 ### `train(...)` Parameters
 
-- `data`: (Required) The `NeuroMatrix` variable containing training data.
+- `data`: (Required) The `NeuroMatrix` variable containing training data (`input` and `output` keys).
 - `epochs`: (Optional) Number of training epochs (default: `10`).
 - `batch_size`: (Optional) Mini-batch size (default: `32`).
 - `validation_data`: (Optional) A `NeuroMatrix` variable containing validation data.
 
 ## Model Evaluation
 
-Evaluate a trained model using the `.evaluate()` method. *Note: The current implementation might be a placeholder.*
+Evaluate a trained model using the `.evaluate()` method. This computes and returns the loss on the provided dataset using the currently configured loss function.
 
 ```neuro
-# Assumes 'my_model' is trained
-# Assumes 'test_data' is a loaded NeuroMatrix
+# Save model state dictionary and metadata
+my_model.save("my_cnn_model.pth");
 
-results = my_model.evaluate(data=test_data);
-print("Evaluation results:", results);
+# Loading requires re-defining the *exact same* architecture first,
+# then using the static load method to load weights and metadata.
+# NOTE: Reconstructing the model purely from the saved file is not supported.
+
+reloaded_model = NeuralNetwork(input_size=(1, 28, 28), output_size=10) {
+    # Must exactly match the saved model's architecture
+    Conv2D(in_channels=1, out_channels=16, kernel_size=3, padding=1, activation="relu");
+    BatchNorm();
+    MaxPool2D(kernel_size=2, stride=2);
+    Conv2D(out_channels=32, kernel_size=3, padding=1, activation="relu");
+    BatchNorm();
+    AvgPool2D(kernel_size=2, stride=2);
+    Flatten();
+    Dense(units=128, activation="relu");
+    Dropout(rate=0.5);
+    BatchNorm();
+    Dense(units=10, activation="softmax");
+};
+
+# Load the saved state dictionary into the existing architecture
+# This load function is defined in models.py
+loaded_model_instance = NeuralNetwork.load("my_cnn_model.pth");
+
+# Now 'loaded_model_instance' contains the architecture AND the loaded weights.
+# You can use it for evaluation or further training.
+eval_results = loaded_model_instance.evaluate(data=test_data);
+
 ```
 
-### `evaluate(...)` Parameters
+- **Saving:** `.save("filepath.pth")` saves the model's state dictionary and associated metadata (like the Neuro language parameters used to create it, if available).
+- **Loading:** `NeuralNetwork.load("filepath.pth")` attempts to load a saved model. It **requires** that you first define a `NeuralNetwork` variable in your script with the **exact same architecture** as the one that was saved. The `.load()` method then creates an instance of this architecture and loads the saved weights (`state_dict`) into it. It does **not** reconstruct the model from the file alone.
 
-- `data`: (Required) The `NeuroMatrix` variable containing evaluation data.
+## Data Format (`.nrm` Files)
 
-## Model Saving and Loading
+The `load_matrix("filepath.nrm")` function expects data to be in YAML format with two top-level keys:
 
-Save model weights and basic metadata using `.save()`. Load using `NeuralNetwork.load()` (static method).
+- `metadata`: A dictionary containing information about the dataset (e.g., name, description, source).
+- `data`: A list where each item is a dictionary containing at least two keys:
+    - `input`: A list or nested list of numbers representing the input features for one sample.
+    - `output`: A list or number representing the target/label for that sample.
+
+Example `data.nrm`:
+
+```yaml
+metadata:
+  name: "Simple XOR Dataset"
+  description: "Dataset for the XOR problem"
+  num_samples: 4
+data:
+  - input: [0.0, 0.0]
+    output: [0.0]
+  - input: [0.0, 1.0]
+    output: [1.0]
+  - input: [1.0, 0.0]
+    output: [1.0]
+  - input: [1.0, 1.0]
+    output: [0.0]
+```
+
+## NeuroMatrix Methods
+
+Variables holding `NeuroMatrix` objects (loaded via `load_matrix` or returned by `split`) have the following methods:
+
+- **`.split(train_frac=0.7, val_frac=0.15, test_frac=0.15, shuffle=True, random_state=None)`**:
+    - Splits the data into training, validation, and testing sets.
+    - Returns a tuple of `(train_matrix, validation_matrix, test_matrix)`.
+    - If a fraction is 0, the corresponding returned matrix will be `None`.
+    - If `test_frac` is omitted, it's calculated as `1 - train_frac - val_frac`.
+    - `shuffle`: Whether to shuffle data before splitting (default: `True`).
+    - `random_state`: Optional integer seed for reproducible shuffles.
 
 ```neuro
-# Saving
-my_model.save("my_cnn_model.pt");
+full_data = load_matrix("dataset.nrm");
 
-# Loading (Requires manual re-definition of the *exact same* architecture first)
-reloaded_model_architecture = NeuralNetwork(...) { ... }; # Define same layers as saved model
+# Split 70% train, 30% test, shuffled
+train_data, _, test_data = full_data.split(train_frac=0.7, val_frac=0.0, test_frac=0.3);
 
-# This static load method is not yet fully functional for reconstruction
-# loaded_model = NeuralNetwork.load("my_cnn_model.pt"); # This likely raises NotImplementedError
+# Split 60% train, 20% val, 20% test, not shuffled
+train_data, val_data, test_data = full_data.split(0.6, 0.2, 0.2, shuffle=False);
 
-# Workaround: Load state dict into the manually created architecture
-# (This functionality needs to be exposed/implemented in the language/interpreter)
-# --> currently no direct language feature for state_dict loading.
+print("Train set:", train_data); # Prints info about the new NeuroMatrix object
 ```
-
-- **Saving:** `.save("filepath.pt")` saves the model's state dictionary.
-- **Loading:** `NeuralNetwork.load("filepath.pt")` is intended but currently raises a `NotImplementedError` because reconstructing the model architecture from the file is not supported. The current workaround involves defining the model again in the script and manually loading the state dictionary using PyTorch methods (which isn't directly possible *within* the NEURO language yet).
 
