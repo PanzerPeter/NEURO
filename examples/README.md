@@ -6,26 +6,6 @@ This directory contains example code demonstrating various features and use case
 
 ```
 examples/
-├── basics/                 # Basic concepts and features
-│   ├── minimal.nr         # Minimal working example
-│   ├── classification.nr  # Binary classification
-│   └── regression.nr      # Simple regression
-├── computer_vision/       # Computer vision examples
-│   ├── mnist.nr          # MNIST classification
-│   ├── transfer.nr       # Transfer learning
-│   └── custom_cnn.nr     # Custom CNN architecture
-├── nlp/                   # Natural Language Processing
-│   ├── sentiment.nr      # Sentiment analysis
-│   └── sequence.nr       # Sequence modeling
-├── advanced/             # Advanced features
-│   ├── custom_layer.nr   # Custom layer implementation
-│   ├── branching.nr      # Model branching
-│   └── callbacks.nr      # Custom callbacks
-└── deployment/           # Deployment examples
-    ├── export.nr         # Model export
-    ├── serve.nr          # Model serving
-    └── optimize.nr       # Model optimization
-```
 
 ## Running the Examples
 
