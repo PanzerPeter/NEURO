@@ -2,12 +2,15 @@
 
 class NeuroError(Exception):
     """Base class for all NEURO-specific errors."""
-    def __init__(self, message, line=None, column=None, source_line=None):
+    def __init__(self, message, line=None, column=None, source_line=None, cause=None):
         super().__init__(message)
         self.message = message
         self.line = line
         self.column = column
         self.source_line = source_line # Store the source line content
+        # Store the original exception if provided, for chaining
+        if cause:
+             self.__cause__ = cause
 
     def __str__(self):
         location = ""
@@ -37,6 +40,10 @@ class NeuroNameError(NeuroError):
 
 class NeuroTypeError(NeuroError):
     """Custom exception for type mismatch errors during interpretation or processing."""
+    pass
+
+class NeuroArgumentError(NeuroTypeError):
+    """Error raised for invalid arguments passed to functions or methods (e.g., wrong number, wrong type)."""
     pass
 
 class NeuroInterpreterError(NeuroError):
