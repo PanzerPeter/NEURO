@@ -215,11 +215,47 @@ class NeuralNetwork(nn.Module):
                 layer_module = nn.Flatten(start_dim=start_dim, end_dim=end_dim)
                 layers[f'{layer_name_base}_flatten'] = layer_module
                 print(f"    Added Flatten Layer: start_dim={start_dim}, end_dim={end_dim}")
-                # Flatten usually converts multi-D input (like from Conv) to 1D for Dense
-                # We assume the output dim is 1 after flatten for subsequent layers like Dense/BatchNorm1d
-                last_layer_dim = 1 
-                current_in_channels = None # Reset channel tracking after Flatten
+                current_in_channels = None # Flatten makes channel tracking irrelevant
+                last_layer_dim = 1 # Flatten output is 1D
                 
+            elif layer_type == 'MaxPool2D':
+                 kernel_size_raw = layer_params.get('kernel_size')
+                 if kernel_size_raw is None:
+                     raise NeuroTypeError(f"Missing required parameter 'kernel_size' for {layer_info}")
+                 kernel_size = _parse_int_tuple(kernel_size_raw, 'kernel_size', layer_info)
+                 
+                 # Default stride is kernel_size in PyTorch MaxPool2d
+                 stride_raw = layer_params.get('stride', kernel_size) 
+                 padding_raw = layer_params.get('padding', 0)
+                 
+                 stride = _parse_int_tuple(stride_raw, 'stride', layer_info)
+                 padding = _parse_int_tuple(padding_raw, 'padding', layer_info)
+                 
+                 layer_module = nn.MaxPool2d(kernel_size=kernel_size, stride=stride, padding=padding)
+                 layers[f'{layer_name_base}_maxpool2d'] = layer_module
+                 print(f"    Added MaxPool2D Layer: kernel={kernel_size}, stride={stride}, padding={padding}")
+                 # Pooling preserves channel count but changes spatial dimensions
+                 last_layer_dim = 2 # Output remains 2D spatially
+
+            elif layer_type == 'AvgPool2D':
+                 kernel_size_raw = layer_params.get('kernel_size')
+                 if kernel_size_raw is None:
+                     raise NeuroTypeError(f"Missing required parameter 'kernel_size' for {layer_info}")
+                 kernel_size = _parse_int_tuple(kernel_size_raw, 'kernel_size', layer_info)
+                 
+                 # Default stride is kernel_size in PyTorch AvgPool2d
+                 stride_raw = layer_params.get('stride', kernel_size)
+                 padding_raw = layer_params.get('padding', 0)
+                 
+                 stride = _parse_int_tuple(stride_raw, 'stride', layer_info)
+                 padding = _parse_int_tuple(padding_raw, 'padding', layer_info)
+                 
+                 layer_module = nn.AvgPool2d(kernel_size=kernel_size, stride=stride, padding=padding)
+                 layers[f'{layer_name_base}_avgpool2d'] = layer_module
+                 print(f"    Added AvgPool2D Layer: kernel={kernel_size}, stride={stride}, padding={padding}")
+                 # Pooling preserves channel count but changes spatial dimensions
+                 last_layer_dim = 2 # Output remains 2D spatially
+
             else:
                 raise NeuroTypeError(f"Unknown or unsupported layer type: {layer_type} ({layer_info})")
 

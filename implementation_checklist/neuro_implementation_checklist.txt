@@ -1,89 +1,88 @@
 # NEURO Programming Language Implementation Checklist
 
-## Core Language Features
 [x] Basic interpreter setup
-[x] Lexer and parser structure (placeholder implementation)
+[x] Lexer and parser implementation
 [x] Abstract Syntax Tree (AST) structure
 [x] Core execution environment
-[ ] Type system for neural network components
 [x] Error handling and reporting system
-[ ] REPL environment
-
-## Neural Network Components
+[x] Command-line script entry point (neuro.py)
+[x] NeuroMatrix (.nrm) format implementation
+[x] Data loading functionality (.nrm only)
+[x] Data splitting (train/val/test)
+[x] Data shuffling in split
+[x] Reproducible splits (random_state)
+[x] Batch creation
 [x] NeuralNetwork class
+[x] Model __str__ representation
 [x] Layer base class
 [x] Dense (Fully Connected) layer
+[x] Activation functions (ReLU, Sigmoid)
+[x] Activation functions (Tanh)
+[x] Activation functions (Softmax)
+[x] Utility layers (BatchNorm)
+[x] Utility layers (Flatten)
+[x] LazyLinear usage
+[x] LazyBatchNorm1d usage
 [x] Convolutional layers (Conv2D)
-[ ] Pooling layers (MaxPool, AvgPool)
+[x] Conv2D parameter handling (stride, padding)
+[x] Pooling layers (MaxPool2D)
+[x] Pooling layers (AvgPool2D)
+[x] Pooling parameter handling (kernel_size, stride, padding)
+[x] Loss functions (BCE)
+[x] BCE Loss input validation/shape handling
+[x] Optimizers (Adam)
+[x] Training loop implementation
+[x] Training history recording
+[x] Checkpoint saving/loading
+[x] Unit test framework
+[x] Example validation tests
+[x] PyTorch backend integration
+[x] Complete the real lexer implementation to handle actual NEURO syntax
+[x] Complete the real parser implementation to generate proper AST
+[x] Implement basic NeuralNetwork class with PyTorch backend
+[x] Implement Dense layer with activation functions (ReLU, Sigmoid)
+[x] Implement basic data handling with NeuroMatrix format (.nrm)
+[x] Simple data loading (.nrm)
+[x] Implement loss (BCE), optimizer (Adam), and basic training loop 
+[ ] Type system for neural network components
+[ ] REPL environment
+[ ] Data preprocessing methods (normalize, handle_missing)
+[ ] Data augmentation
 [ ] Recurrent layers (LSTM, GRU)
-[x] Utility layers (Dropout, BatchNorm, Flatten)
-[x] Activation functions (ReLU, Sigmoid, Tanh, Softmax)
 [ ] Custom layer support
 [ ] Model branching
-
-## Training Components
-[x] Loss functions (BCE, CrossEntropy, MSE)
-[x] Optimizers (Adam, SGD, RMSprop)
-[x] Training loop implementation
-[ ] Callbacks system (@before_training, @after_epoch, @after_batch)
 [ ] Metrics tracking (accuracy, precision, recall, f1)
+[ ] Callbacks system (@before_training, @after_epoch, @after_batch)
 [ ] Early stopping functionality
-[x] Checkpoint saving/loading
-[x] Training history recording
-
-## Data Handling
-[x] NeuroMatrix (.nrm) format implementation
-[ ] Data loading functionality
-[ ] Data preprocessing methods (normalize, handle_missing)
-[x] Data splitting (train/val/test)
-[x] Batch creation
-[ ] Data augmentation
-
-## Memory Management
-[ ] Gradient checkpointing
 [ ] Memory usage monitoring
+[ ] Gradient checkpointing
 [ ] Automatic batch size optimization
 [ ] Memory limits enforcement
-
-## Advanced Features
+[ ] Integration test framework
 [ ] Transfer learning (@pretrained decorator)
 [ ] Custom layer definition (@custom_layer decorator)
 [ ] Model visualization
 [ ] Mixed precision training
 [ ] Multi-GPU support
 [ ] Debugging tools
-
-## Deployment Features
-[ ] Model export (ONNX, TorchScript)
-[ ] Model quantization
-[ ] Model serving
-[ ] Model optimization for inference
-[ ] Monitoring tools
-
-## Integration
-[x] PyTorch backend integration
 [ ] Data format compatibility
 [ ] Visualization tools integration
-
-## First Implementation Target (Minimal Feature Set)
-[x] Complete NeuralNetwork class with PyTorch backend
-[x] Dense layer implementation
-[x] Simple activation functions (ReLU, Sigmoid)
-[x] Basic optimizer (Adam)
-[x] Simple loss function (BCE)
-[x] Basic training loop
-[ ] Simple data loading
-
-## Testing Infrastructure
-[x] Unit test framework
-[ ] Integration test framework
-[x] Example validation tests
-
-
-[x] Complete the real lexer implementation to handle actual NEURO syntax
-[x] Complete the real parser implementation to generate proper AST
-[x] Implement basic NeuralNetwork class with PyTorch backend
-[x] Implement Dense layer with activation functions
-[x] Implement basic data handling with NeuroMatrix format
-[x] Implement loss, optimizer, and basic training loop
-[x] Simple data loading 
+[ ] Model export (ONNX, TorchScript)
+[ ] Model quantization
+[ ] Model optimization for inference
+[ ] Model serving
+[ ] Monitoring tools 
+[ ] GPU Acceleration Support (device management)
+[ ] Regularization Layers (Dropout)
+[ ] Improve model loading (avoid manual redefinition)
+[ ] Advanced Data Handling (DataLoader abstraction, iterators)
+[ ] Neuro Syntax: Control Flow (if/else, for)
+[ ] Neuro Syntax: User-defined functions
+[ ] Attention Mechanisms / Transformer Blocks
+[ ] More Optimizers (AdamW, AdaGrad)
+[ ] More Loss Functions (Huber, KL Divergence)
+[ ] L1/L2 Regularization (in optimizers or layers)
+[ ] Documentation Generation & Website
+[ ] Language Server Protocol (LSP) support
+[ ] Neuro Standard Library (math, io, etc.)
+[ ] Compiler Backend (Performance Boost)

@@ -73,7 +73,6 @@ class NeuroParser:
 
     def _parse_statement(self):
         """ Parses a single statement (e.g., assignment, model call). """
-        # Check for keywords or patterns that identify the statement type
         token = self._current_token()
         
         # Check for Assignment (potentially tuple assignment)

@@ -68,3 +68,21 @@ class FlattenLayer(Layer):
         self.start_dim = start_dim
         self.end_dim = end_dim
         # Actual nn.Flatten created in NeuralNetwork model 
+
+class MaxPool2dLayer(Layer):
+    """Represents a 2D Max Pooling layer."""
+    def __init__(self, kernel_size, stride=None, padding=0):
+        super().__init__()
+        self.kernel_size = kernel_size
+        self.stride = stride if stride is not None else kernel_size # Default stride = kernel_size
+        self.padding = padding
+        # Actual nn.MaxPool2d created in NeuralNetwork model
+
+class AvgPool2dLayer(Layer):
+    """Represents a 2D Average Pooling layer."""
+    def __init__(self, kernel_size, stride=None, padding=0):
+        super().__init__()
+        self.kernel_size = kernel_size
+        self.stride = stride if stride is not None else kernel_size # Default stride = kernel_size
+        self.padding = padding
+        # Actual nn.AvgPool2d created in NeuralNetwork model 
