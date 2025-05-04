@@ -13,7 +13,7 @@
 [x] NeuralNetwork class
 [x] Layer base class
 [x] Dense (Fully Connected) layer
-[ ] Convolutional layers (Conv2D)
+[x] Convolutional layers (Conv2D)
 [ ] Pooling layers (MaxPool, AvgPool)
 [ ] Recurrent layers (LSTM, GRU)
 [ ] Utility layers (Dropout, BatchNorm, Flatten)
@@ -79,7 +79,7 @@
 [ ] Integration test framework
 [x] Example validation tests
 
-## Next Steps (Priority Order)
+
 [x] Complete the real lexer implementation to handle actual NEURO syntax
 [x] Complete the real parser implementation to generate proper AST
 [x] Implement basic NeuralNetwork class with PyTorch backend

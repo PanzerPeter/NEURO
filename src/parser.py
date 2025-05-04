@@ -153,8 +153,15 @@ class NeuroParser:
 
     def _parse_layer(self):
         """ Parses: LayerType(params...) """
-        layer_type_token = self._expect('IDENTIFIER', "Expected layer type (e.g., Dense)")
+        layer_type_token = self._expect('IDENTIFIER', "Expected layer type (e.g., Dense, Conv2D)")
         layer_type = layer_type_token.value
+        
+        # Validate known layer types (optional but good practice)
+        # known_layers = {'Dense', 'Conv2D', 'Dropout'} # Expand as needed
+        # if layer_type not in known_layers:
+        #     logging.warning(f"Parser encountered potentially unknown layer type: '{layer_type}' at line {layer_type_token.lineno}")
+        #     # Depending on strictness, could raise NeuroSyntaxError here
+
         params = self._parse_parameters()
         return neuro_ast.Layer(layer_type=layer_type, params=params)
 
@@ -216,8 +223,11 @@ class NeuroParser:
                 elif value_token.type == 'NUMBER':
                     value = value_token.value
                     self._advance()
-                elif value_token.type == 'IDENTIFIER': # For data source names
-                    value = neuro_ast.Identifier(name=value_token.value)
+                elif value_token.type == 'IDENTIFIER': # Could be a data source name or the keyword None
+                    if value_token.value == 'None': # Handle None keyword
+                        value = None
+                    else:
+                        value = neuro_ast.Identifier(name=value_token.value)
                     self._advance()
                 else:
                     raise self._syntax_error("Expected STRING, NUMBER, or IDENTIFIER as parameter value")
