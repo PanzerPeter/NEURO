@@ -26,11 +26,15 @@ class NeuroLexer:
             # Keywords would go here if we had any reserved words
             
             # Literals
-            ('NUMBER',      r'(?:0|[1-9]\d*)(?:\.\d+)?'),      # Integers and floats
+            ('NUMBER',      r'-?(?:0|[1-9]\d*)(?:\.\d+)?'),      
             ('STRING',      r'"(?:[^"\\]|\\\\|\.)*"'),         # Double-quoted strings
             
             # Operators, delimiters and punctuation
             ('ASSIGN',      r'='),                             # Assignment operator
+            ('PLUS',        r'\+'),                            # Addition operator
+            ('MINUS',       r'-'),                             # Subtraction/Unary Minus operator
+            ('MULTIPLY',    r'\*'),                           # Multiplication operator
+            ('DIVIDE',      r'/'),                             # Division operator
             ('LPAREN',      r'\('),                            # Left parenthesis
             ('RPAREN',      r'\)'),                            # Right parenthesis
             ('LBRACE',      r'\{'),                            # Left brace

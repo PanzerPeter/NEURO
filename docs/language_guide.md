@@ -74,6 +74,7 @@ a, b = some_function_returning_two_values();
 - **NeuroMatrix**: Represents datasets, loaded via `load_matrix()` or returned by `split()`. It supports methods like `.split()`.
 - **NeuralNetwork**: Represents a defined model. It supports methods like `.train()`, `.evaluate()`, and `.save()`.
 - **None**: The special value `None` (currently used implicitly when assigning Loss/Optimizer configurations).
+- **Internal Types**: The type system uses internal types like `IntType`, `FloatType`, `StringType`, `TensorType`, `LayerType`, `ModelType`, `LossType`, `OptimizerType`, `FunctionType`, `DataType`, `VoidType`, `AnyType` for static analysis. You don't typically interact with these directly, but error messages might refer to them.
 
 ## Built-in Functions
 
@@ -87,6 +88,57 @@ print("Value of x:", x);
 data = load_matrix("../datasets/iris.nrm");
 print("Loaded data:", data); # Note: Printing a matrix might show limited info
 ```
+
+## Type System (Static Analysis)
+
+NEURO includes a static type checker that runs automatically before your script is interpreted (when using the `--use-real` flag). Its goal is to catch potential errors early, such as incompatible layer connections, using variables before they are defined, or passing the wrong kind of data to functions or layers.
+
+**Key Checks Performed:**
+
+*   **Variable Usage:** Ensures variables are defined before use and tracks their inferred types (`Int`, `Float`, `String`, `ModelType`, `DataType`, etc.).
+*   **Layer Compatibility:** When defining a `NeuralNetwork`, the type checker analyzes the sequence of layers:
+    *   It infers the output shape and data type (typically `Float`) of each layer.
+    *   It verifies that the output type/shape of one layer is compatible with the expected input type/shape of the next layer.
+    *   It checks layer parameters (e.g., `units` must be an `Int`).
+    *   Dimensionality is checked (e.g., `Conv2D` expects 4D tensor input, `Dense` expects 2D).
+*   **Function/Method Calls:**
+    *   Checks if the function or method exists for the given object type.
+    *   Validates the number and types of arguments passed against the expected signature.
+*   **Training Compatibility:** Before a `train` statement, it checks:
+    *   If a `Loss` and `Optimizer` have been defined.
+    *   If the model's output type is compatible with the loss function's expected input.
+    *   (Future) If the model's input and loss target types are compatible with the training data.
+
+**How it Works:**
+
+The checker traverses the code structure (Abstract Syntax Tree) *without* running the code. It infers types based on assignments and definitions and uses pre-defined signatures for built-in functions, methods, layers, losses, and optimizers to validate usage.
+
+**Example Errors Caught:**
+
+```neuro
+my_model = NeuralNetwork() {
+    Dense(units=64); # Output: (Batch, 64)
+    # ERROR: Conv2D expects 4D input, but Dense output is 2D.
+    Conv2D(out_channels=16, kernel_size=3); 
+};
+
+x = "not a number";
+# ERROR: Dense layer 'units' parameter expects Int, got String.
+layer = Dense(units=x);
+
+defined_model = NeuralNetwork() { Dense(units=1); };
+# ERROR: Variable 'undefined_model' is not defined.
+save(undefined_model, filepath="model.pth"); 
+
+classify_model = NeuralNetwork() { Dense(units=10); }; # Output (Batch, 10)
+Loss(type="BCE"); # BCE expects 1D output
+Optimizer(type="Adam");
+# ERROR: Model output Tensor(shape=(None, 10)) is not compatible
+#        with loss expected input Tensor(shape=(None,)).
+train(classify_model, data=some_data, epochs=5);
+```
+
+If the type checker finds errors, they will be printed after parsing, and the script execution will halt.
 
 ## Model Definition
 

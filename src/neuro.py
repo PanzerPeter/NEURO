@@ -17,6 +17,8 @@ try:
     from src.parser import NeuroParser
     from src.interpreter import NeuroInterpreter
     from src.errors import NeuroError # Import base Neuro error
+    # Import the TypeChecker
+    from src.type_checker import TypeChecker
     # from src.matrix import NeuroMatrix # Import if needed directly here
 except ImportError as e:
     print(f"Error importing NEURO components: {e}", file=sys.stderr)
@@ -67,12 +69,27 @@ def main():
             neuro_parser.set_use_real_parser(args.use_real)
             ast_root = neuro_parser.parse(code)
 
-            # 2. Interpretation / Execution
+            # 2. Type Checking (inserted step)
+            print("--- Performing Type Checking ---")
+            type_checker = TypeChecker()
+            type_checker.check(ast_root)
+
+            if type_checker.errors:
+                print("\n--- Type Errors Found --- ", file=sys.stderr)
+                for error in type_checker.errors:
+                    print(f"- {error}", file=sys.stderr)
+                print("\nType checking failed. Halting execution.", file=sys.stderr)
+                sys.exit(1)
+            else:
+                print("--- Type Checking Passed ---")
+
+            # 3. Interpretation / Execution (was step 2)
+            print("--- Starting Interpretation ---")
             neuro_interpreter = NeuroInterpreter()
-            neuro_interpreter.interpret(ast_root)
+            neuro_interpreter.interpret(ast_root) # Pass potentially type-annotated AST
 
         except NeuroError as e:
-            # Catch any NEURO-specific errors (Syntax, Interpreter, etc.)
+            # Catch any NEURO-specific errors (Syntax, Interpreter, Type, etc.)
             print(f"\n--- NEURO Error ---", file=sys.stderr)
             print(e, file=sys.stderr) # Use the custom __str__ method from NeuroError
             sys.exit(1)

@@ -55,20 +55,27 @@ class NeuroParser:
         """ Parses a program: a sequence of statements until EOF."""
         body = []
         while self._current_token().type != 'EOF':
+            # Store the type of statement parsed for better error messages
             statement = self._parse_statement()
             body.append(statement)
-            # Expect a semicolon after most statements
-            # Model definitions end with '}', method calls don't have a separate ';'
-            # Assignments are handled within _parse_assignment_statement
-            if isinstance(statement, neuro_ast.AssignmentStatement):
-                # Check if the assigned value was a model def; if so, no semicolon needed here
-                if not isinstance(statement.value, neuro_ast.ModelDefinition):
-                    self._expect('SEMICOLON', f"Expected ';' after assignment statement ending with {type(statement.value)}")
-            elif isinstance(statement, (neuro_ast.TrainStatement, neuro_ast.EvaluateStatement, neuro_ast.FunctionCall)):
-                # These method calls/function calls are statements themselves, expect semicolon
-                 self._expect('SEMICOLON', f"Expected ';' after {type(statement).__name__} statement")
-            # Add other statement types that need semicolons here
-            
+
+            # After successfully parsing a statement, we expect a SEMICOLON
+            # unless we are at the End Of File OR it's a model definition assignment.
+            # The loop condition `while self._current_token().type != \'EOF\'` handles the EOF case.
+            # Check if the statement is an assignment of a model definition
+            is_model_assignment = (
+                isinstance(statement, neuro_ast.AssignmentStatement) and
+                isinstance(statement.value, neuro_ast.ModelDefinition)
+            )
+            # If the loop continues...
+            if not is_model_assignment:
+                # Expect a semicolon after regular statements
+                self._expect('SEMICOLON', f"Expected ';' after {type(statement).__name__} statement")
+            else:
+                # For model assignments, semicolon is optional
+                if self._current_token().type == 'SEMICOLON':
+                    self._advance() # Consume optional semicolon
+
         return neuro_ast.Program(body=body)
 
     def _parse_statement(self):
@@ -101,6 +108,12 @@ class NeuroParser:
                 # This returns a specific statement node (TrainStatement, EvaluateStatement)
                 call_statement = self._parse_method_call_expression()
                 return call_statement
+            # Check for Loss(...) or Optimizer(...) calls as statements
+            elif token.value in ('Loss', 'Optimizer') and self._peek_token(1) and self._peek_token(1).type == 'LPAREN':
+                 # Parse using _parse_expression, which handles these simple calls
+                 # These return LossDefinition/OptimizerDefinition nodes which act as statements here.
+                 definition_node = self._parse_expression()
+                 return definition_node
             # NEW: Check for general function call (e.g., print(...))
             elif self._peek_token(1) and self._peek_token(1).type == 'LPAREN':
                  # Parse the function call as a statement
@@ -382,7 +395,9 @@ class NeuroParser:
 
         self._expect('RPAREN', "Expected ')' to end function call")
         
-        return neuro_ast.FunctionCall(func_name=func_name, args=args)
+        # Wrap the function name string in an Identifier node
+        func_name_node = neuro_ast.Identifier(name=func_name)
+        return neuro_ast.FunctionCall(func_name=func_name_node, args=args)
 
     # --- Helper methods for parsing --- 
     def _current_token(self):

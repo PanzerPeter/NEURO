@@ -1,7 +1,36 @@
 import torch
 from torch.optim import Optimizer
+from typing import Dict, Any, Tuple, Iterable
 
-class Adam(Optimizer):
+# Import Neuro types
+from .neuro_types import OptimizerType, NEURO_ANY
+
+class BaseOptimizer(Optimizer):
+    """Base class for Neuro optimizers to ensure common methods."""
+    def __init__(self, params: Iterable[torch.Tensor] | Iterable[Dict[str, Any]], defaults: Dict[str, Any]):
+        # Need to handle params correctly, maybe pass them during interpretation?
+        # For type checking, we might not need params initially.
+        # Let's make params optional for the base __init__ during type check phase.
+        super().__init__(params if params else [torch.nn.Parameter(torch.empty(1))], defaults)
+
+    def get_config(self) -> Dict[str, Any]:
+        """Return the optimizer configuration."""
+        # Extract relevant config from defaults
+        # Subclasses should implement this properly
+        return self.defaults.copy() if hasattr(self, 'defaults') else {}
+
+    def get_type_signature(self) -> OptimizerType:
+        """Return the type signature for the optimizer."""
+        # Optimizers generally don't have specific tensor input/output types
+        # They operate on parameters based on gradients.
+        return OptimizerType()
+
+    def __repr__(self) -> str:
+        config = self.get_config()
+        config_str = ", ".join(f"{k}={v!r}" for k, v in config.items())
+        return f"{self.__class__.__name__}({config_str})"
+
+class Adam(BaseOptimizer):
     """
     Implements the Adam algorithm.
 
@@ -12,7 +41,7 @@ class Adam(Optimizer):
         eps (float, optional): Term added to the denominator to improve numerical stability (default: 1e-8).
         weight_decay (float, optional): Weight decay (L2 penalty) (default: 0).
     """
-    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
+    def __init__(self, params=None, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0):
         if not 0.0 <= lr:
             raise ValueError(f"Invalid learning rate: {lr}")
         if not 0.0 <= eps:
@@ -25,7 +54,16 @@ class Adam(Optimizer):
             raise ValueError(f"Invalid weight_decay value: {weight_decay}")
 
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
-        super(Adam, self).__init__(params, defaults)
+        # Pass dummy params if none provided (e.g., during type checking instantiation)
+        super().__init__(params, defaults)
+
+    def get_config(self) -> Dict[str, Any]:
+        # Return the core hyperparameters
+        # Exclude params which are not part of config
+        config = self.defaults.copy()
+        return config
+
+    # get_type_signature is inherited from BaseOptimizer
 
     def __setstate__(self, state):
         super(Adam, self).__setstate__(state)

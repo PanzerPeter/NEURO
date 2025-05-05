@@ -4,7 +4,7 @@
 import sys
 import os
 import src.neuro_ast as neuro_ast # Use alias to avoid standard library conflicts
-from src.errors import NeuroInterpreterError, NeuroNameError, NeuroTypeError, NeuroError
+from src.errors import NeuroInterpreterError, NeuroNameError, NeuroTypeError, NeuroError, NeuroDataError
 # Import the actual network model
 from src.models import NeuralNetwork
 import torch
@@ -291,15 +291,50 @@ class NeuroInterpreter:
             
         model_object = self.variables.get(model_name)
         if not isinstance(model_object, NeuralNetwork):
-             raise NeuroTypeError(f"Variable '{model_name}' is not an evaluatable NeuralNetwork object (found {type(model_object)})." )
-             
-        # TODO: Load data
-        # TODO: Implement evaluation logic using the PyTorch model
-        print(f"(Placeholder) Evaluating model '{model_name}' ({type(model_object)})...")
-        # Placeholder return value
-        accuracy = 0.95 # Dummy accuracy
-        print(f"(Placeholder) Evaluation result (accuracy): {accuracy}")
-        return accuracy
+            raise NeuroTypeError(f"Variable '{model_name}' is not an evaluatable NeuralNetwork object (found {type(model_object)})." )
+
+        # --- Get Data ---
+        if data_source_name not in self.variables:
+            raise NeuroNameError(f"Data variable '{data_source_name}' is not defined.")
+        data_object = self.variables.get(data_source_name)
+        if not isinstance(data_object, NeuroMatrix):
+             raise NeuroTypeError(f"Data variable '{data_source_name}' is not a NeuroMatrix object (found {type(data_object)})." )
+
+        try:
+            X_eval = torch.tensor([item['input'] for item in data_object.data], dtype=torch.float32)
+            y_eval = torch.tensor([item['output'] for item in data_object.data], dtype=torch.float32)
+            if len(y_eval.shape) == 1:
+                y_eval = y_eval.unsqueeze(1)
+        except (KeyError, TypeError, ValueError) as e:
+             raise NeuroDataError(f"Error processing evaluation data from '{data_source_name}': {e}")
+        print(f"  Loaded evaluation data: {len(X_eval)} samples")
+
+        # --- Get Loss Config (needed for loss calculation) ---
+        loss_config = self.config.get('loss')
+        if not loss_config or not isinstance(loss_config, dict):
+             # Allow evaluation without pre-configured loss for just predictions?
+             # For now, require loss config to report loss.
+             print(f"Warning: Loss function not configured. Cannot report evaluation loss for model '{model_name}'.")
+             loss_fn_name = None
+             # raise NeuroError(f"Loss function not properly configured before evaluating '{model_name}'. Use 'loss = Loss(type=...)'.")
+        else:
+            loss_fn_name = loss_config.get('type')
+            if not loss_fn_name:
+                raise NeuroTypeError("Loss configuration missing 'type' parameter during evaluation.")
+
+        # --- Perform Evaluation ---
+        # Use the evaluate method from the NeuralNetwork class
+        results = model_object.evaluate(
+            X_eval=X_eval,
+            y_eval=y_eval,
+            loss_fn_name=loss_fn_name # Pass loss function name
+            # Remove batch_size for now as EvaluateStatement has no params
+            # batch_size=int(node.params.get('batch_size', 32))
+        )
+
+        print(f"Interpreter: Evaluation complete for model '{model_name}'. Results: {results}")
+        # Return the results dictionary (e.g., {'loss': ..., 'accuracy': ...})
+        return results
         
     def visit_Identifier(self, node: neuro_ast.Identifier):
         """Handles retrieving the value of a variable."""
@@ -322,29 +357,80 @@ class NeuroInterpreter:
 
     def visit_FunctionCall(self, node: neuro_ast.FunctionCall):
         """Handles calls to built-in functions like load_matrix() or print()."""
-        func_name = node.func_name
-        print(f"Visiting FunctionCall: {func_name}")
+        # Ensure func_name is an Identifier node
+        if not isinstance(node.func_name, neuro_ast.Identifier):
+             # This should not happen if parser is correct, but handle defensively
+             raise NeuroInterpreterError(f"Interpreter Error: Function name is not an Identifier node ({type(node.func_name)})")
 
-        if func_name not in self.functions:
-            raise NeuroNameError(f"Function '{func_name}' is not defined.")
+        func_name_str = node.func_name.name
+        print(f"Visiting FunctionCall: {func_name_str}")
 
-        # Evaluate arguments *before* calling the function
-        evaluated_args = [self.visit(arg) for arg in node.args]
+        if func_name_str not in self.functions:
+            raise NeuroNameError(f"Function '{func_name_str}' is not defined.")
+
+        func = self.functions[func_name_str]
+        
+        # Evaluate arguments
+        evaluated_args = []
+        try:
+            evaluated_args = [self.visit(arg) for arg in node.args]
+        except NeuroError as e: # Catch errors during argument evaluation
+            # Re-raise, possibly adding context about the function call
+            raise NeuroInterpreterError(f"Error evaluating arguments for function '{func_name_str}': {e}") from e
+
         print(f"  Evaluated args: {evaluated_args}")
 
         # Call the corresponding Python function
-        target_function = self.functions[func_name]
+        target_function = func
         
         # Call the internal function (_load_matrix_function expects the AST node)
         # TODO: Standardize built-in function signatures - some might want evaluated args, others the raw AST node
-        if func_name == 'load_matrix':
+        if func_name_str == 'load_matrix':
              if len(node.args) != 1:
                   raise NeuroTypeError(f"load_matrix() takes exactly 1 argument (filepath), got {len(node.args)}")
-             # Pass the StringLiteral AST node directly as expected by _load_matrix_function
-             return target_function(node.args[0]) 
+             # Assuming the argument for load_matrix is a StringLiteral or Identifier
+             arg_node = node.args[0]
+             filepath = None # Define filepath variable outside try
+             try:
+                 if isinstance(arg_node, neuro_ast.StringLiteral):
+                     filepath = arg_node.value # Get filepath from literal
+                 elif isinstance(arg_node, neuro_ast.Identifier):
+                      # Evaluate the identifier to get the filepath string
+                      filepath_var_name = arg_node.name
+                      if filepath_var_name not in self.variables:
+                           raise NeuroNameError(f"Variable '{filepath_var_name}' used for load_matrix filepath is not defined.")
+                      filepath = self.variables[filepath_var_name]
+                      if not isinstance(filepath, str):
+                           raise NeuroTypeError(f"Variable '{filepath_var_name}' must be a string for load_matrix, got {type(filepath)}.")
+                 else:
+                     raise NeuroTypeError(f"load_matrix() argument must be a string literal or a variable containing a string, got {type(arg_node)}")
+
+                 # Call the internal function with the resolved filepath string
+                 return target_function(filepath) # Call _load_matrix_function
+
+             # Catch specific NeuroErrors from resolving/type checking or from _load_matrix_function
+             except (NeuroNameError, NeuroTypeError, NeuroDataError, NeuroInterpreterError) as e:
+                 raise e # Re-raise these directly
+             # Catch unexpected Python errors during resolution or the call itself
+             except Exception as e:
+                  # Wrap unexpected errors in NeuroInterpreterError
+                  raise NeuroInterpreterError(f"Unexpected error during load_matrix execution for path '{filepath}': {e}") from e
+
+        elif func_name_str == 'print':
+            # Call print with evaluated arguments
+            try:
+                 return target_function(*evaluated_args) # Call with evaluated values
+            except Exception as e:
+                 # If the print function itself raises an error (less likely for basic print)
+                 raise NeuroInterpreterError(f"Error during execution of print(): {e}")
         else:
-             # Assume other functions want evaluated arguments
-             return target_function(*evaluated_args)
+             # Handle other built-in functions if they are added
+             # For now, assume others also take evaluated args
+             try:
+                 return target_function(*evaluated_args)
+             except Exception as e:
+                  # General error handling for other functions
+                  raise NeuroInterpreterError(f"Error during execution of function '{func_name_str}': {e}")
 
     def visit_SaveStatement(self, node: neuro_ast.SaveStatement):
         """Handles 'model.save("filepath")' statement."""
@@ -400,9 +486,12 @@ class NeuroInterpreter:
         # The parser stores key-value pairs directly in args for MethodCall (like split)
         # We need to evaluate the *values* in the args dictionary if they are AST nodes
         evaluated_args = {}
-        for key, value_node in args_dict.items():
-            # Value could be Literal, Identifier, etc.
-             evaluated_args[key] = self.visit(value_node)
+        try:
+            for key, value_node in args_dict.items():
+                # Value could be Literal, Identifier, etc.
+                 evaluated_args[key] = self.visit(value_node)
+        except NeuroError as e:
+             raise NeuroInterpreterError(f"Error evaluating arguments for method '{object_name}.{method_name}': {e}") from e
 
         print(f"  Calling {method_name} on {type(obj).__name__} with evaluated args: {evaluated_args}")
 
@@ -411,9 +500,11 @@ class NeuroInterpreter:
             result = method(**evaluated_args) # Use keyword arguments
             print(f"  Method call {object_name}.{method_name} returned: {type(result)}")
             return result
+        except NeuroError as e: # Catch known Neuro errors from the method
+            raise e
         except Exception as e:
-            # Catch errors during the actual method execution
-            raise NeuroInterpreterError(f"Error executing method '{object_name}.{method_name}': {e}")
+            # Catch other errors during the actual method execution
+            raise NeuroInterpreterError(f"Error executing method '{object_name}.{method_name}': {e}") # Changed NeuroInterpreterError
 
     # --- Built-in Function Implementations ---
     def _print_function(self, *args):
@@ -421,13 +512,9 @@ class NeuroInterpreter:
         print("Built-in print:", *args) # Add prefix for clarity
         return None # Print usually doesn't return a value
         
-    def _load_matrix_function(self, filepath_node):
+    def _load_matrix_function(self, filepath):
         """Implementation of the built-in load_matrix function."""
-        # Expecting a StringLiteral node for the filepath
-        if not isinstance(filepath_node, neuro_ast.StringLiteral):
-             raise NeuroTypeError(f"load_matrix expects a string filepath argument, got AST node {type(filepath_node)}")
-             
-        filepath = filepath_node.value
+        # Filepath is already validated as string by visit_FunctionCall
         print(f"Interpreter: Loading matrix from '{filepath}'...")
         try:
             matrix = NeuroMatrix()
@@ -436,10 +523,10 @@ class NeuroInterpreter:
             return matrix # Return the loaded NeuroMatrix object
         except FileNotFoundError:
             # Convert FileNotFoundError to a NeuroError the user might see
-            raise NeuroError(f"Data file not found: '{filepath}'") 
+            raise NeuroInterpreterError(f"Data file not found: '{filepath}'") # Use InterpreterError
         except NeuroDataError as e:
              # Propagate NeuroDataError
-             raise e
+             raise e # Let this specific error type through
         except Exception as e:
              # Catch other potential errors during loading
-             raise NeuroError(f"Failed to load matrix '{filepath}': {e}") 
+             raise NeuroInterpreterError(f"Failed to load matrix '{filepath}': {e}") # Use InterpreterError 

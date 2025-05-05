@@ -44,7 +44,7 @@
 [x] Implement basic data handling with NeuroMatrix format (.nrm)
 [x] Simple data loading (.nrm)
 [x] Implement loss (BCE), optimizer (Adam), and basic training loop 
-[ ] Type system for neural network components
+[x] Type system for neural network components
 [ ] REPL environment
 [ ] Data preprocessing methods (normalize, handle_missing)
 [ ] Data augmentation

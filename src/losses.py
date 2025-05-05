@@ -1,13 +1,57 @@
 import torch
 import torch.nn as nn
+from typing import Dict, Any
 
-class BCELoss(nn.Module):
+# Import Neuro types
+from .neuro_types import (
+    NeuroType, LossType, TensorType, NEURO_FLOAT, NEURO_INT, AnyType, 
+    TensorFloat32, TensorInt32, NEURO_ANY
+)
+
+class BaseLoss(nn.Module):
+    """Base class for Neuro losses to ensure common methods."""
+    def __init__(self):
+        super().__init__()
+
+    def get_config(self) -> Dict[str, Any]:
+        """Return the loss configuration."""
+        # Base implementation returns empty dict, subclasses should override
+        return {}
+
+    def get_type_signature(self) -> LossType:
+        """Return the type signature for the loss function."""
+        # Default: expects Any predictions and targets
+        # Subclasses should override with specific types
+        return LossType(pred_type=NEURO_ANY, target_type=NEURO_ANY)
+
+    def __repr__(self) -> str:
+        config = self.get_config()
+        config_str = ", ".join(f"{k}={v!r}" for k, v in config.items())
+        return f"{self.__class__.__name__}({config_str})"
+
+class BCELoss(BaseLoss):
     """
     Binary Cross-Entropy Loss.
     """
     def __init__(self):
         super().__init__()
         self.loss_fn = nn.BCELoss()
+
+    def get_config(self) -> Dict[str, Any]:
+        # BCE has no configurable parameters in this simple version
+        return {}
+
+    def get_type_signature(self) -> LossType:
+        # BCE expects float predictions (probabilities) and float/int targets
+        # Shapes typically (batch,) or (batch, 1)
+        # Allow flexible batch dimension with None
+        pred_type = TensorFloat32(shape=(None,)) # Or (None, 1)? Let's use (None,)
+        target_type = TensorType(shape=(None,), dtype=NEURO_FLOAT) # Accepts float targets
+        # Could also allow Int targets: TensorInt32(shape=(None,))
+        # Let's make target type slightly more general for now
+        # target_type = TensorType(shape=(None,), dtype=AnyType()) # Or check compatible numeric? 
+        
+        return LossType(pred_type=pred_type, target_type=target_type)
 
     def forward(self, predictions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """

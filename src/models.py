@@ -55,6 +55,8 @@ class NeuralNetwork(nn.Module):
         self.model_name = name
         self.input_size = params.get('input_size') # Store for potential future use/validation
         self.output_size = params.get('output_size') # Store for potential future use/validation
+        # Store the original layer definitions for saving/loading
+        self.layer_nodes = layer_nodes
         
         print(f"Initializing PyTorch NeuralNetwork: {name}")
         print(f"  Input Size: {self.input_size}, Output Size: {self.output_size}")
@@ -380,6 +382,67 @@ class NeuralNetwork(nn.Module):
         print(f"--- Finished training ---")
         return history # Return the recorded history dictionary
 
+    def evaluate(self, X_eval, y_eval, loss_fn_name, batch_size=32):
+        """Evaluates the model on the provided data.
+
+        Args:
+            X_eval (torch.Tensor): Evaluation features.
+            y_eval (torch.Tensor): Evaluation targets.
+            loss_fn_name (str): Name of the loss function ('bce', 'mse', 'crossentropy').
+            batch_size (int): Batch size for evaluation.
+
+        Returns:
+            dict: A dictionary containing evaluation results (e.g., {'loss': ...}).
+        """
+        print(f"Starting evaluation...")
+        results = {}
+
+        # --- Select Loss Function ---
+        loss_fn_name_lower = loss_fn_name.lower()
+        if loss_fn_name_lower == 'bce':
+            loss_fn = BCELoss()
+        elif loss_fn_name_lower == 'mse':
+            loss_fn = nn.MSELoss()
+        elif loss_fn_name_lower == 'crossentropy':
+             loss_fn = nn.CrossEntropyLoss()
+        else:
+            # Default to None or raise error if loss is required?
+            # For now, allow evaluation without a known loss, loss will be None.
+            print(f"Warning: Unknown loss function '{loss_fn_name}' specified for evaluation.")
+            loss_fn = None
+            results['loss'] = None
+
+        self.eval() # Set model to evaluation mode
+        num_eval_samples = X_eval.shape[0]
+        num_eval_batches = (num_eval_samples + batch_size - 1) // batch_size
+        eval_loss_total = 0.0
+
+        with torch.no_grad(): # Disable gradient calculations
+            for i in range(0, num_eval_samples, batch_size):
+                batch_X_eval = X_eval[i:i + batch_size]
+                batch_y_eval = y_eval[i:i + batch_size]
+                
+                eval_outputs = self(batch_X_eval)
+                
+                # Calculate loss only if loss_fn is valid
+                if loss_fn:
+                    eval_loss = loss_fn(eval_outputs, batch_y_eval)
+                    eval_loss_total += eval_loss.detach().item()
+
+        if loss_fn and num_eval_batches > 0:
+            avg_eval_loss = eval_loss_total / num_eval_batches
+            results['loss'] = avg_eval_loss
+            print(f"Evaluation Loss: {avg_eval_loss:.4f}")
+        elif not loss_fn:
+             print("Evaluation finished (loss not calculated due to unknown loss function).")
+        else: # num_eval_batches == 0
+            print("Evaluation finished (no samples to evaluate).")
+            results['loss'] = None # Or 0.0? Or NaN?
+
+        self.train() # Set model back to training mode (good practice)
+        print(f"--- Finished evaluation ---")
+        return results
+
     def save(self, filepath):
         """Saves the model's state_dict and architecture info to a file.
 
@@ -401,8 +464,8 @@ class NeuralNetwork(nn.Module):
             'model_name': self.model_name,
             'input_size': self.input_size,
             'output_size': self.output_size,
-            # TODO: Persist the layer_nodes structure used during __init__ for robust loading
-            # 'layer_nodes': self.layer_nodes, # Assuming layer_nodes was stored on self
+            # Persist the layer_nodes structure used during __init__ for robust loading
+            'layer_nodes': self.layer_nodes, 
             'model_state_dict': self.state_dict(),
             '__version__': '0.1.0' # Add a version for future compatibility
         }
@@ -434,55 +497,45 @@ class NeuralNetwork(nn.Module):
 
         try:
             # Load onto CPU first, can be moved to GPU later if needed
-            checkpoint = torch.load(filepath, map_location=torch.device('cpu'))
+            # NOTE: Using weights_only=False because we save custom AST Layer nodes.
+            # This is generally unsafe if loading files from untrusted sources.
+            # Consider using torch.serialization.add_safe_globals for production.
+            checkpoint = torch.load(filepath, map_location=torch.device('cpu'), weights_only=False)
             
-            # Basic validation
-            required_keys = ['model_name', 'model_state_dict'] # Add more as save format evolves
+            # --- Basic validation of required keys --- 
+            required_keys = ['model_name', 'model_state_dict', 'layer_nodes'] # Ensure layer_nodes is present
             if not all(key in checkpoint for key in required_keys):
-                raise KeyError(f"Saved model file '{filepath}' is missing required keys. Found: {list(checkpoint.keys())}")
+                missing_keys = [k for k in required_keys if k not in checkpoint]
+                raise KeyError(f"Saved model file '{filepath}' is missing required keys: {missing_keys}. Found: {list(checkpoint.keys())}")
 
             # --- Reconstructing the Model --- 
-            # This is the complex part. Without the original layer definitions 
-            # (like the layer_nodes list passed to __init__), we cannot perfectly 
-            # reconstruct the model, especially with Lazy modules. 
-            # 
-            # WORKAROUND (SIMPLE): Assume the user has defined an identical 
-            # NeuralNetwork structure *before* calling load, and we just load the weights.
-            # This is common in PyTorch workflows but less ideal for a standalone language.
-            # 
-            # A BETTER APPROACH (REQUIRES saving layer_nodes in .save()):
-            # 1. Get layer_nodes from checkpoint['layer_nodes']
-            # 2. Create a new NeuralNetwork instance using these layer_nodes:
-            #    model = NeuralNetwork(name=checkpoint['model_name'], 
-            #                        params={'input_size': checkpoint.get('input_size'), ...}, 
-            #                        layer_nodes=checkpoint['layer_nodes'])
-            # 3. Load the state dict: model.load_state_dict(checkpoint['model_state_dict'])
-            #
-            # For now, we cannot implement the better approach as layer_nodes isn't saved.
-            # We will raise an error indicating this limitation.
-            
-            # print(f"Warning: Model loading currently assumes the model architecture")
-            # print(f"         is defined *before* calling load. Only weights are loaded.")
-            # print(f"         Reconstructing architecture from file is not yet supported.")
-            
-            # Placeholder for demonstration - THIS WILL LIKELY FAIL without prior model definition
-            # model_name = checkpoint['model_name']
-            # print(f"Loaded model name: {model_name}")
-            # model = NeuralNetwork(name=model_name, params={}, layer_nodes=[]) # Dummy creation
-            # model.load_state_dict(checkpoint['model_state_dict'])
-            
-            # Raise an informative error until reconstruction is implemented
-            raise NotImplementedError("Model reconstruction from file is not yet implemented. " 
-                                    "Define the model architecture in your script first, then load the state_dict into it.")
-            
-            # Once reconstruction works, return the model:
-            # model.eval() # Set to evaluation mode after loading
-            # print(f"Model '{model.model_name}' loaded successfully.")
-            # return model
+            model_name = checkpoint['model_name']
+            layer_nodes = checkpoint['layer_nodes']
+            # Reconstruct params dict (can be extended if more params are saved)
+            params = {
+                'input_size': checkpoint.get('input_size'),
+                'output_size': checkpoint.get('output_size')
+            }
+
+            # Create a new NeuralNetwork instance using the loaded structure
+            print(f"Reconstructing model '{model_name}' architecture...")
+            model = NeuralNetwork(name=model_name, 
+                                params=params, 
+                                layer_nodes=layer_nodes)
+
+            # Load the state dict into the newly created model
+            model.load_state_dict(checkpoint['model_state_dict'])
+            print(f"Loaded model state_dict for '{model_name}'.")
+
+            # Set to evaluation mode after loading
+            model.eval() 
+            print(f"Model '{model.model_name}' loaded successfully and set to eval() mode.")
+            return model
             
         except FileNotFoundError: # Already handled but good practice
             raise
         except Exception as e:
+            # Catch potential errors during reconstruction or state_dict loading
             print(f"Error loading model from {filepath}: {e}")
             # Potentially raise a custom NeuroLoadError
             raise # Re-raise the exception
