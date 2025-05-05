@@ -1,8 +1,17 @@
 metadata:
+  name: Dummy Binary Classification
   description: "Dummy binary classification dataset (features -> 0 or 1)"
+  version: 1.0
+  missing_value_token: null
   num_samples: 10
-  input_features: 4
-  output_features: 1
+  features:
+    input:
+      - { name: feature_a, type: numeric }
+      - { name: feature_b, type: numeric }
+      - { name: feature_c, type: numeric }
+      - { name: feature_d, type: numeric }
+    output:
+      - { name: label, type: numeric }
 
 data:
   - input: [0.1, 0.2, 0.3, 0.4]
@@ -24,4 +33,12 @@ data:
   - input: [0.1, 0.4, 0.2, 0.3]
     output: [0]
   - input: [0.8, 0.5, 0.7, 0.9]
-    output: [1] 
+    output: [1]
+  - input: [0.9, 1.2, 0.1]
+    output: [0]
+  - input: [1.4, 0.5, 0.8]
+    output: [0]
+  - input: [NA, 0.7, 1.5]
+    output: [1]
+  - input: [0.3, .nan, 0.6]
+    output: [0] 

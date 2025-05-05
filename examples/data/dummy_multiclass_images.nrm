@@ -1,8 +1,18 @@
 metadata:
+  name: Dummy Multiclass Images
   description: "Dummy image-like dataset (e.g., 1x8x8 -> one-hot encoding)"
+  version: 1.0
+  missing_value_token: null
   num_samples: 6
-  input_features: [1, 8, 8] # Example: 1 channel, 8x8 image
-  output_features: 3 # Example: 3 classes
+  input_shape: [1, 8, 8]
+  features:
+    input:
+      - { name: pixel_1, type: numeric }
+      - { name: pixel_64, type: numeric }
+    output:
+      - { name: class_0, type: numeric }
+      - { name: class_1, type: numeric }
+      - { name: class_2, type: numeric }
 
 data:
   # Simplified representation - real image data would be larger/different

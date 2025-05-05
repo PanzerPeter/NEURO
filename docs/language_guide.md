@@ -362,3 +362,111 @@ train_data, val_data, test_data = full_data.split(0.6, 0.2, 0.2, shuffle=False);
 print("Train set:", train_data); # Prints info about the new NeuroMatrix object
 ```
 
+## Data Formats
+
+NEURO primarily uses the `.nrm` (NeuroMatrix) format for handling datasets. This format is based on YAML for readability and ease of editing.
+
+### .nrm Format Specification
+
+A `.nrm` file consists of two main top-level keys: `metadata` and `data`.
+
+```yaml
+metadata:
+  name: My Dataset                  # Optional: Human-readable name
+  description: "Dataset details..." # Optional: Description of the data
+  version: 1.0                     # Optional: Version of the dataset format/contents
+  missing_value_token: null        # Optional: How missing values appear in the data section (e.g., null, NA, "", -1). Defaults to `null`.
+  # Optional but recommended: Describes the structure of input/output data
+  features:
+    input:
+      - { name: feature1, type: numeric }   # List of input features
+      - { name: feature2, type: categorical } # Type can be numeric, categorical, text, etc.
+      # ... more input features
+    output:
+      - { name: target, type: numeric }     # List of output features
+      # ... more output features
+  # Other custom metadata keys can be added here
+
+data:
+  # List of data points (records/rows)
+  - input: [value1_1, value1_2] # Must match the order and length of metadata.features.input
+    output: [target1]           # Must match the order and length of metadata.features.output
+  - input: [value2_1, null]     # Example using `missing_value_token` (here, null)
+    output: [target2]
+  - input: [value3_1, .nan]     # Example using standard YAML NaN
+    output: [target3]
+  # ... more data points
+```
+
+*   **`metadata`**: A dictionary containing information *about* the dataset.
+    *   `name`, `description`, `version`: Self-explanatory identifiers.
+    *   `missing_value_token`: Defines the representation of missing data within the `data` list. The `NeuroMatrix` loader will convert these tokens to an internal representation (currently `None`).
+    *   `features`: A dictionary with `input` and `output` keys. Each holds a list of dictionaries, where each dictionary defines a feature's `name` and `type`. This metadata is crucial for applying type-specific preprocessing.
+*   **`data`**: A list where each element is a dictionary containing `input` and `output` keys. The values are lists of the actual data, corresponding to the features defined in the metadata.
+*   **NaN Handling**: Standard YAML NaN representations (`.nan`, `.NaN`, `.NAN`) are automatically parsed by the YAML loader as `float('nan')`. These are treated distinctly from the `missing_value_token`. Methods within `NeuroMatrix` (like `normalize`) are designed to handle both `None` (from the token) and `float('nan')` appropriately, typically by converting them to `numpy.nan` when performing numerical operations.
+
+## Built-in Classes and Modules
+
+NEURO provides built-in classes for common tasks.
+
+### `NeuroMatrix`
+
+This class is the primary way to load, handle, and preprocess tabular data stored in `.nrm` files.
+
+**Loading Data:**
+
+```neuro
+# Load data from a file
+my_data = NeuroMatrix()
+my_data.load("path/to/your_data.nrm")
+
+print(my_data) # Shows basic info
+print("Number of samples:", len(my_data))
+print("Input Features:", my_data.input_features)
+```
+
+**Preprocessing Methods:**
+
+The `NeuroMatrix` class offers methods to preprocess the loaded data *in-place*.
+
+*   **`normalize(method='minmax', columns=None, data_type='input')`**
+    *   Normalizes numeric columns.
+    *   `method`: `'minmax'` (scales to [0, 1]) or `'zscore'` (scales to zero mean, unit variance).
+    *   `columns`: An optional list of specific column names (strings) to normalize. If `None` (default), all columns marked as `numeric` in the specified `data_type`'s features will be normalized.
+    *   `data_type`: `'input'` (default) or `'output'` to specify which set of features to normalize.
+    *   Example:
+        ```neuro
+        # Min-max scale all numeric input features
+        my_data.normalize(method='minmax', data_type='input')
+
+        # Z-score scale specific output feature 'target1'
+        my_data.normalize(method='zscore', columns=['target1'], data_type='output')
+        ```
+
+*   **`handle_missing(strategy='mean', columns=None, data_type='input', value=None)`**
+    *   Handles missing values (represented internally as `None` or `np.nan`).
+    *   `strategy`:
+        *   `'mean'`: Fills missing values in numeric columns with the column's mean.
+        *   `'median'`: Fills missing values in numeric columns with the column's median.
+        *   `'constant'`: Fills missing values with the value specified in the `value` argument.
+        *   `'remove'`: Removes entire rows (data points) that contain missing values in any of the specified `columns`.
+    *   `columns`: An optional list of specific column names (strings) to process. If `None` (default), all columns in the specified `data_type` are processed.
+    *   `data_type`: `'input'` (default) or `'output'`.
+    *   `value`: Required only when `strategy='constant'`. Specifies the value to fill missing entries with.
+    *   Example:
+        ```neuro
+        # Fill missing values in input columns 'feature1' and 'feature3' with their respective means
+        my_data.handle_missing(strategy='mean', columns=['feature1', 'feature3'], data_type='input')
+
+        # Fill all missing output values with 0
+        my_data.handle_missing(strategy='constant', value=0, data_type='output')
+
+        # Remove rows with any missing data in the input features
+        my_data.handle_missing(strategy='remove', data_type='input')
+        ```
+
+*   **`split(train_frac=0.7, val_frac=0.15, test_frac=0.15, shuffle=True, random_state=None)`**
+    *   Splits the dataset into training, validation, and test sets.
+    *   Returns a tuple of three `NeuroMatrix` objects (or `None` if a fraction is 0).
+    *   See `test_matrix.py` for detailed usage examples.
+
