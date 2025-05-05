@@ -3,6 +3,8 @@
 import argparse
 import sys
 import os
+# Add built-in input function for REPL
+import builtins 
 
 # Now we can import from other modules within src
 try:
@@ -18,6 +20,56 @@ except ImportError as e:
     print(f"Current sys.path: {sys.path}", file=sys.stderr)
     print("Ensure you are running from the project root or using the top-level 'neuro.py' script.", file=sys.stderr)
     sys.exit(1)
+
+def start_repl():
+    """Starts the NEURO Read-Eval-Print Loop (REPL)."""
+    print("NEURO Language REPL (v0.1)")
+    print("Type 'exit()' or 'quit()' to exit.")
+
+    # Instantiate components once for the session
+    # Assuming use_real should be True for REPL for now
+    neuro_parser = NeuroParser(use_real_lexer=True)
+    neuro_parser.set_use_real_parser(True)
+    type_checker = TypeChecker()
+    neuro_interpreter = NeuroInterpreter() # Add environment sharing if needed later
+
+    while True:
+        try:
+            # Use builtins.input to avoid conflict if user defines 'input'
+            line = builtins.input("neuro> ")
+            if line.strip().lower() in ["exit()", "quit()"]:
+                break
+            if not line.strip(): # Skip empty lines
+                continue
+
+            # Process the line
+            ast_root = neuro_parser.parse(line)
+            type_checker.check(ast_root) # Check types for the single line/statement
+
+            if type_checker.errors:
+                for error in type_checker.errors:
+                    print(f"Type Error: {error}", file=sys.stderr)
+                type_checker.errors.clear() # Clear errors for the next input
+                continue # Don't interpret if type errors occurred
+
+            # Interpret the AST
+            result = neuro_interpreter.interpret(ast_root)
+            if result is not None: # Only print if interpret returns something
+                 print(repr(result)) # Use repr for clearer output of objects/types
+
+        except NeuroError as e:
+            print(e, file=sys.stderr) # Print NEURO-specific errors
+            # Clear any potential parser/lexer state if needed (depends on implementation)
+            # neuro_parser.reset() # Assuming NeuroParser has a reset method - REMOVED, parse() resets state
+            type_checker.errors.clear() # Also clear type errors here
+        except EOFError: # Handle Ctrl+D
+            print("\nExiting REPL.")
+            break
+        except Exception as e:
+            print(f"Internal Error: {type(e).__name__}: {e}", file=sys.stderr)
+            # Consider resetting state here too if applicable
+            # neuro_parser.reset() - REMOVED, parse() resets state
+            type_checker.errors.clear()
 
 def main():
     """Main function to parse and execute NEURO code."""
@@ -37,8 +89,9 @@ def main():
 
     # Check if a command was provided
     if not args.command:
-        parser.print_help()
-        sys.exit(1)
+        # If no command, start the REPL
+        start_repl()
+        sys.exit(0) # Exit cleanly after REPL finishes
 
     # Handle the 'run' command
     if args.command == "run":

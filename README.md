@@ -161,4 +161,22 @@ When using this software, please adhere to the terms of the GPL-3.0 license, inc
 
 ## Contact
 
-For questions and support, please open an issue in the GitHub repository: [https://github.com/PanzerPeter/NEURO/issues](https://github.com/PanzerPeter/NEURO/issues) 
+For questions and support, please open an issue in the GitHub repository: [https://github.com/PanzerPeter/NEURO/issues](https://github.com/PanzerPeter/NEURO/issues)
+
+## Usage
+
+### Interactive REPL
+
+If you run the interpreter without any arguments, it will start an interactive Read-Eval-Print Loop (REPL):
+
+```bash
+python neuro.py 
+```
+
+This will present you with a `neuro>` prompt where you can type Neuro commands one line at a time. The interpreter will execute each line and print the result (if any) or report errors.
+
+To exit the REPL, type `exit()` or `quit()` and press Enter, or press `Ctrl+D` (on Linux/macOS) or `Ctrl+Z` then Enter (on Windows).
+
+## Features
+
+// ... existing code ... 

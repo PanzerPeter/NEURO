@@ -1,6 +1,19 @@
-# NEURO Examples
+# NEURO Language Examples
 
-This directory contains example code demonstrating various features and use cases of the NEURO language.
+This directory contains various examples demonstrating the features and usage of the NEURO programming language.
+
+Each subdirectory focuses on a specific aspect:
+
+*   `basics/`: Fundamental syntax and operations.
+*   `data/`: Data loading, splitting, and manipulation.
+*   `mlp/`: Building Multi-Layer Perceptrons.
+*   `cnn/`: Building Convolutional Neural Networks.
+*   `training/`: Model training loops, optimizers, and loss functions.
+*   `types/`: Examples showcasing the type system.
+
+Refer to the individual files within these directories for specific code examples.
+
+**Note:** You can also experiment with NEURO code interactively using the REPL by running `python neuro.py` from the project root directory without any arguments.
 
 ## Directory Structure
 
@@ -18,26 +31,3 @@ examples/
    ```bash
    neuro run examples/basics/minimal.nr
    ```
-
-## Example Categories
-
-### Basics
-Simple examples demonstrating core NEURO concepts and syntax.
-
-### Computer Vision
-Examples focused on image processing and computer vision tasks.
-
-### Natural Language Processing
-Examples showing text processing and sequence modeling.
-
-### Advanced Features
-Examples demonstrating advanced NEURO features like custom layers and model branching.
-
-### Deployment
-Examples showing how to deploy NEURO models in production environments.
-
-## Data Files
-Example data files (*.nrm) are provided in the respective directories.
-
-## Contributing
-Feel free to contribute your own examples by submitting a pull request! 
