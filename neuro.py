@@ -4,14 +4,6 @@ import argparse
 import sys
 import os
 
-# Ensure importing from sibling directories works correctly
-# Add the parent directory of 'src' (the project root) to sys.path
-# This is necessary if running this script directly (e.g., python src/neuro.py)
-# instead of using the top-level neuro.py or `python -m src.neuro`
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
 # Now we can import from other modules within src
 try:
     from src.parser import NeuroParser

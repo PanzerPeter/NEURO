@@ -96,7 +96,6 @@ print("Training complete."); # Example of using built-in print
 NEURO/
 ├── src/                 # Source code (lexer, parser, interpreter, models, etc.)
 │   ├── __init__.py
-│   ├── neuro.py         # Main script logic (used by entry point)
 │   ├── parser.py
 │   ├── interpreter.py
 │   ├── neuro_ast.py
@@ -105,9 +104,11 @@ NEURO/
 │   ├── losses.py
 │   ├── optimizers.py
 │   ├── matrix.py
+│   ├── type_checker.py
+│   ├── neuro_types.py
 │   └── errors.py
+├── neuro.py         # Main script logic (used by entry point)
 ├── examples/            # Example NEURO programs (.nr files)
-├── tests/               # Pytest tests
 ├── docs/                # Documentation files (Markdown)
 ├── .gitignore
 ├── LICENSE              # License file (GPL-3.0)
