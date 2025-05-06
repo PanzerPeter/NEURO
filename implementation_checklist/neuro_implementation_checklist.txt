@@ -46,7 +46,7 @@
 [x] Implement loss (BCE), optimizer (Adam), and basic training loop 
 [x] Type system for neural network components
 [x] REPL environment
-[x] Data preprocessing methods (normalize, handle_missing)
+[x] Data preprocessing methods (normalize, handle_missing, NaN handleing)
 [ ] Data augmentation
 [ ] Recurrent layers (LSTM, GRU)
 [ ] Custom layer support
