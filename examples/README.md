@@ -22,12 +22,9 @@ examples/
 
 ## Running the Examples
 
-1. Install NEURO:
-   ```bash
-   pip install neuro-lang
-   ```
+1. Install NEURO by following the instructions in the main [README.md](../README.md#installation) file (typically `pip install -e .` from the project root).
 
-2. Run an example:
+2. Run an example from the project root directory:
    ```bash
-   neuro run examples/basics/minimal.nr
+   python neuro.py examples/basics/minimal.nr
    ```

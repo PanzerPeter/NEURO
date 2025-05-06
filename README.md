@@ -14,20 +14,56 @@ NEURO is a domain-specific language (DSL) designed for creating, training, and e
 
 ## Features (Current Implementation - Alpha)
 
-- 🧠 **Declarative Neural Network Definition**: Define network architectures using a dedicated syntax.
-- 🚀 **PyTorch Backend**: Leverages PyTorch for network construction and training.
-- 📊 **Data Handling**: Basic data loading via `NeuroMatrix` YAML format and `load_matrix` function.
-- 🧩 **Core Layers**: 
-  - `Dense` (Fully Connected)
-  - `Conv2D` (2D Convolution)
-  - `Flatten`
-  - `BatchNorm` (Infers 1D/2D from context, uses `LazyBatchNorm1d` / `BatchNorm2d`)
-- ✨ **Activations**: `ReLU`, `Sigmoid`, `Tanh`, `Softmax` (applied within layers).
-- 📉 **Loss Functions**: `BCELoss`, `MSELoss`, `CrossEntropyLoss` (configured via `Loss(...)` assignment).
-- ⚙️ **Optimizers**: `Adam`, `SGD`, `RMSprop` (configured via `Optimizer(...)` assignment).
-- 💪 **Basic Training Loop**: `model.train(data, ...)` with support for epochs, batch size, and optional validation data.
-- 📝 **Model Saving/Loading**: Basic checkpointing (`model.save(...)`) and loading (`model.load(...)`) - *Note: Loading currently requires manual model re-definition before loading weights.*
-- ↔️ **Tuple Assignment**: Assign results from functions like `data.split()` to multiple variables.
+- 🧠 **Declarative Neural Network Definition**: Define network architectures using a dedicated NEURO syntax.
+- 🚀 **PyTorch Backend**: Leverages PyTorch for efficient network construction, training, and inference.
+- 🗣️ **Core Language Processing**: Includes a lexer, parser, and Abstract Syntax Tree (AST) generation for NEURO code.
+- ⌨️ **Interactive REPL**: Experiment with NEURO commands line-by-line using the `neuro.py` script without arguments.
+- ↔️ **Tuple Assignment**: Supports assigning results from functions like `data.split()` to multiple variables.
+- 📝 **Built-in `print` Function**: For basic output and debugging within NEURO scripts.
+- 🔍 **Type System**: Basic type checking for neural network components and language constructs.
+- ⚠️ **Error Handling**: Integrated error reporting for syntax and runtime issues.
+
+- 📊 **Data Handling & Preprocessing**:
+  - **`NeuroMatrix` Format**: YAML-based `.nrm` files for dataset storage (metadata and data).
+  - **`load_matrix()`**: Built-in function to load `.nrm` data.
+  - **Data Splitting**: `data.split(train_frac, val_frac, test_frac, shuffle, random_state)` for creating training, validation, and test sets.
+  - **Data Shuffling**: Integrated into `data.split()`.
+  - **Reproducible Splits**: `random_state` parameter for consistent data splitting.
+  - **Normalization**: In-place `data.normalize(method=['minmax'|'zscore'], columns, data_type=['input'|'output'])` for numerical features.
+  - **Missing Value Handling**: In-place `data.handle_missing(strategy=['mean'|'median'|'remove'|'constant'], columns, data_type, value)` for specified features.
+  - *(Further data augmentation and advanced preprocessing methods are planned).*
+
+- 🧩 **Core Layers & Architectures**:
+  - **`NeuralNetwork` Class**: Defines the overall model structure.
+  - **`Layer` Base Class**: Foundation for custom layer development.
+  - **`Dense` (Fully Connected)**: Standard dense layer. Supports `LazyLinear` for automatic input size inference.
+  - **`Conv2D` (2D Convolution)**: For image and spatial data. Supports `stride` and `padding` parameters.
+  - **`Flatten`**: Reshapes multi-dimensional input into a 1D vector.
+  - **`BatchNorm`**: Batch Normalization, infers 1D/2D from context (uses `LazyBatchNorm1d` / `BatchNorm2d`).
+  - **Pooling Layers**:
+    - `MaxPool2D`
+    - `AvgPool2D`
+    - Both support `kernel_size`, `stride`, and `padding`.
+- ✨ **Activations**: `ReLU`, `Sigmoid`, `Tanh`, `Softmax` (typically applied as a string argument within layer definitions like `Dense(units=64, activation="relu")`).
+
+- 📉 **Loss Functions**: Configured via `loss_cfg = Loss(type="...")` assignment.
+  - `BCELoss` (Binary Cross-Entropy) - Includes input validation.
+  - `MSELoss` (Mean Squared Error)
+  - `CrossEntropyLoss`
+- ⚙️ **Optimizers**: Configured via `opt_cfg = Optimizer(type="...", learning_rate=...)` assignment.
+  - `Adam`
+  - `SGD` (Stochastic Gradient Descent)
+  - `RMSprop`
+
+- 💪 **Model Training & Management**:
+  - **Training Loop**: `model.train(data, epochs, batch_size, val_data)` method.
+  - **Batch Creation**: Handled internally during training.
+  - **Training History**: `train()` method returns a history object with metrics (e.g., loss per epoch).
+  - **Model `__str__` Representation**: Printable summary of the model architecture.
+  - **Model Saving/Loading**:
+    - `model.save("filename.pt")`: Saves model weights and metadata.
+    - `model.load("filename.pt")`: Loads model weights. *(Note: Current implementation may require manual re-definition of the model architecture before loading weights).*
+- 🚀 **Command-Line Interface**: Execute `.nr` scripts using `python neuro.py your_script.nr`.
 
 _(Many advanced features listed previously, like RNNs, attention, label smoothing, etc., are planned but not yet implemented)._
 
@@ -118,20 +154,37 @@ NEURO/
 
 ## Data Format (`.nrm` files)
 
-NEURO uses a YAML-based format (`.nrm`) managed by the `NeuroMatrix` class. Files should contain `metadata` and `data` sections.
+NEURO uses a YAML-based format (`.nrm`) managed by the `NeuroMatrix` class. 
+Files must contain `metadata` and `data` sections. The `metadata` section should 
+define feature names and types under a `features` key, which itself contains 
+`input` and `output` lists.
 
 ```yaml
 metadata:
-  description: "Simple dataset for demonstration"
-  num_samples: 5
-  input_features: 3
-  output_features: 1
+  name: "IrisFlowerDataset_Simplified"
+  description: "Simplified Iris dataset example with explicit feature definitions."
+  num_samples: 3 # Example, will be determined by actual data length
+  missing_value_token: "NA" # Optional: Define how missing values appear in data lists
+
+  features: # Defines the structure of the input and output data vectors
+    input:
+      - { name: "sepal_length_cm", type: "numeric" }
+      - { name: "sepal_width_cm", type: "numeric" }
+      - { name: "petal_length_cm", type: "numeric" }
+      # - { name: "petal_width_cm", type: "numeric" } # Example if more features
+    output:
+      - { name: "species_id", type: "categorical" } # e.g., 0 for setosa, 1 for versicolor
 
 data:
-  - input: [1.0, 2.0, 3.0]
-    output: [1]
-  - input: [4.0, 5.0, 6.0]
+  # Each item in 'input' and 'output' corresponds to the order in metadata.features
+  - input: [5.1, 3.5, 1.4]
     output: [0]
+  - input: [4.9, 3.0, 1.4]
+    output: [0]
+  - input: [7.0, 3.2, 4.7] # Example for a different class
+    output: [1]
+  - input: [6.4, 3.2, "NA"] # Example with a missing value for petal_length_cm
+    output: [1]
   # ... more data points
 ```
 
@@ -176,7 +229,3 @@ python neuro.py
 This will present you with a `neuro>` prompt where you can type Neuro commands one line at a time. The interpreter will execute each line and print the result (if any) or report errors.
 
 To exit the REPL, type `exit()` or `quit()` and press Enter, or press `Ctrl+D` (on Linux/macOS) or `Ctrl+Z` then Enter (on Windows).
-
-## Features
-
-// ... existing code ... 
