@@ -1,0 +1,47 @@
+                    GNU GENERAL PUBLIC LICENSE
+                       Version 3, 29 June 2007
+
+ Copyright (C) 2024-2025 NEURO Project Contributors
+
+                        ALPHA VERSION NOTICE
+                        
+ THIS SOFTWARE IS IN ALPHA STAGE AND IS PROVIDED "AS IS", WITHOUT WARRANTY 
+ OF ANY KIND, EXPRESS OR IMPLIED. IN NO EVENT SHALL THE AUTHORS, COPYRIGHT 
+ HOLDERS, OR CONTRIBUTORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER 
+ LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE.
+
+ USE OF THIS ALPHA SOFTWARE IS ENTIRELY AT YOUR OWN RISK.
+ 
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation, either version 3 of the License, or
+ (at your option) any later version.
+
+ This program is distributed in the hope that it will be useful,
+ but WITHOUT ANY WARRANTY; without even the implied warranty of
+ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ GNU General Public License for more details.
+
+ You should have received a copy of the GNU General Public License
+ along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+                     Additional Permissions
+
+ In addition to the rights granted under the GNU General Public License,
+ you are granted additional permissions:
+
+ 1. You may use, modify, and distribute this software for any purpose,
+    provided that you include the following attribution in all copies
+    or substantial portions of the software:
+    
+    "Based on NEURO (https://github.com/PanzerPeter/NEURO)"
+
+ 2. You may not claim that you wrote the original software. If you use
+    this software in a product, an acknowledgment in the product
+    documentation would be appreciated but is not required.
+
+ 3. Modified versions must be clearly marked as such, and must not be
+    misrepresented as being the original software.
+
+ For more details about the GNU General Public License, see:
+ <https://www.gnu.org/licenses/gpl-3.0.html>
