@@ -19,6 +19,8 @@ class ASTNode(ABC):
     
     def __init__(self, location: Optional[SourceLocation] = None):
         self.location = location
+        # Create unique ID for hashing
+        self._id = id(self)
     
     @abstractmethod
     def pretty_print(self, indent: int = 0) -> str:
@@ -28,6 +30,20 @@ class ASTNode(ABC):
     def _indent(self, level: int) -> str:
         """Helper for indentation in pretty printing."""
         return "  " * level
+    
+    def __hash__(self) -> int:
+        """Make AST nodes hashable using their unique ID."""
+        if not hasattr(self, '_id'):
+            self._id = id(self)
+        return hash(self._id)
+    
+    def __eq__(self, other) -> bool:
+        """AST nodes are equal if they are the same object."""
+        if not hasattr(self, '_id'):
+            self._id = id(self)
+        if not hasattr(other, '_id'):
+            other._id = id(other)
+        return isinstance(other, ASTNode) and self._id == other._id
 
 
 # ============================================================================
@@ -47,6 +63,12 @@ class PrimitiveType(Type):
     
     def pretty_print(self, indent: int = 0) -> str:
         return self.name
+    
+    def __hash__(self) -> int:
+        return hash(self.name)
+    
+    def __eq__(self, other) -> bool:
+        return isinstance(other, PrimitiveType) and self.name == other.name
 
 
 @dataclass
@@ -61,6 +83,15 @@ class TensorType(Type):
             shape_str = f"({', '.join(map(str, self.shape))})"
             return f"Tensor<{self.element_type.pretty_print()}, {shape_str}>"
         return f"Tensor<{self.element_type.pretty_print()}>"
+    
+    def __hash__(self) -> int:
+        shape_tuple = tuple(self.shape) if self.shape else None
+        return hash((hash(self.element_type), shape_tuple))
+    
+    def __eq__(self, other) -> bool:
+        return (isinstance(other, TensorType) and 
+                self.element_type == other.element_type and 
+                self.shape == other.shape)
 
 
 @dataclass
@@ -72,6 +103,15 @@ class FunctionType(Type):
     def pretty_print(self, indent: int = 0) -> str:
         params = ', '.join(t.pretty_print() for t in self.param_types)
         return f"({params}) -> {self.return_type.pretty_print()}"
+    
+    def __hash__(self) -> int:
+        param_tuple = tuple(hash(pt) for pt in self.param_types)
+        return hash((param_tuple, hash(self.return_type)))
+    
+    def __eq__(self, other) -> bool:
+        return (isinstance(other, FunctionType) and 
+                self.param_types == other.param_types and 
+                self.return_type == other.return_type)
 
 
 @dataclass
@@ -86,6 +126,15 @@ class GenericType(Type):
             constraints_str = ' + '.join(c.pretty_print() for c in self.constraints)
             return f"{self.name}: {constraints_str}"
         return self.name
+    
+    def __hash__(self) -> int:
+        constraints_tuple = tuple(hash(c) for c in self.constraints) if self.constraints else None
+        return hash((self.name, constraints_tuple))
+    
+    def __eq__(self, other) -> bool:
+        return (isinstance(other, GenericType) and 
+                self.name == other.name and 
+                self.constraints == other.constraints)
 
 
 # ============================================================================
@@ -97,7 +146,7 @@ class Expression(ASTNode):
     pass
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class Literal(Expression):
     """Literal values: numbers, strings, booleans."""
     value: Union[int, float, str, bool]
@@ -110,7 +159,7 @@ class Literal(Expression):
         return str(self.value)
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class Identifier(Expression):
     """Variable or function identifier."""
     name: str
@@ -120,7 +169,7 @@ class Identifier(Expression):
         return self.name
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class BinaryOp(Expression):
     """Binary operation: +, -, *, /, etc."""
     left: Expression
@@ -132,7 +181,7 @@ class BinaryOp(Expression):
         return f"({self.left.pretty_print()} {self.operator} {self.right.pretty_print()})"
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class UnaryOp(Expression):
     """Unary operation: -, !, ~."""
     operator: str
@@ -143,7 +192,7 @@ class UnaryOp(Expression):
         return f"{self.operator}{self.operand.pretty_print()}"
 
 
-@dataclass
+@dataclass(eq=False)
 class FunctionCall(Expression):
     """Function call expression."""
     function: Expression
@@ -155,7 +204,7 @@ class FunctionCall(Expression):
         return f"{self.function.pretty_print()}({args})"
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class MemberAccess(Expression):
     """Member access: obj.member."""
     object: Expression
@@ -166,7 +215,7 @@ class MemberAccess(Expression):
         return f"{self.object.pretty_print()}.{self.member}"
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class IndexAccess(Expression):
     """Array/tensor indexing: arr[index]."""
     object: Expression
@@ -177,7 +226,7 @@ class IndexAccess(Expression):
         return f"{self.object.pretty_print()}[{self.index.pretty_print()}]"
 
 
-@dataclass
+@dataclass(eq=False)
 class TensorLiteral(Expression):
     """Tensor literal: [1, 2, 3] or [[1, 2], [3, 4]]."""
     elements: List[Expression]
@@ -188,7 +237,18 @@ class TensorLiteral(Expression):
         return f"[{elements_str}]"
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
+class RangeLiteral(Expression):
+    """Range literal: 0..100."""
+    start: Expression
+    end: Expression
+    location: Optional[SourceLocation] = None
+    
+    def pretty_print(self, indent: int = 0) -> str:
+        return f"{self.start.pretty_print()}..{self.end.pretty_print()}"
+
+
+@dataclass(unsafe_hash=True)
 class Assignment(Expression):
     """Assignment expression: x = value."""
     target: Expression
@@ -197,6 +257,29 @@ class Assignment(Expression):
     
     def pretty_print(self, indent: int = 0) -> str:
         return f"{self.target.pretty_print()} = {self.value.pretty_print()}"
+
+
+@dataclass(eq=False)
+class StructInitializer(Expression):
+    """Struct initialization: Type { field1: value1, field2: value2 }."""
+    struct_type: str  # Name of the struct type
+    fields: Dict[str, Expression]  # field_name -> value_expression
+    location: Optional[SourceLocation] = None
+    
+    def pretty_print(self, indent: int = 0) -> str:
+        field_strs = [f"{name}: {expr.pretty_print()}" for name, expr in self.fields.items()]
+        return f"{self.struct_type} {{ {', '.join(field_strs)} }}"
+
+
+@dataclass(unsafe_hash=True)
+class NamedArgument(Expression):
+    """Named function argument: name=value."""
+    name: str
+    value: Expression
+    location: Optional[SourceLocation] = None
+    
+    def pretty_print(self, indent: int = 0) -> str:
+        return f"{self.name}={self.value.pretty_print()}"
 
 
 # ============================================================================
@@ -208,7 +291,7 @@ class Statement(ASTNode):
     pass
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class ExpressionStatement(Statement):
     """Expression used as a statement."""
     expression: Expression
@@ -218,7 +301,7 @@ class ExpressionStatement(Statement):
         return self._indent(indent) + self.expression.pretty_print()
 
 
-@dataclass
+@dataclass(eq=False)
 class Block(Statement):
     """Block of statements: { ... }."""
     statements: List[Statement]
@@ -232,7 +315,7 @@ class Block(Statement):
         return '\n'.join(lines)
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class VariableDeclaration(Statement):
     """Variable declaration: let x: Type = value."""
     name: str
@@ -248,7 +331,7 @@ class VariableDeclaration(Statement):
         return f"{self._indent(indent)}let {mut_str}{self.name}{type_str}{init_str}"
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class IfStatement(Statement):
     """If statement with optional else clause."""
     condition: Expression
@@ -265,7 +348,7 @@ class IfStatement(Statement):
         return '\n'.join(lines)
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class WhileStatement(Statement):
     """While loop statement."""
     condition: Expression
@@ -278,7 +361,7 @@ class WhileStatement(Statement):
         return '\n'.join(lines)
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class ForStatement(Statement):
     """For loop statement."""
     variable: str
@@ -292,7 +375,7 @@ class ForStatement(Statement):
         return '\n'.join(lines)
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class ReturnStatement(Statement):
     """Return statement with optional value."""
     value: Optional[Expression] = None
@@ -304,7 +387,7 @@ class ReturnStatement(Statement):
         return f"{self._indent(indent)}return"
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class BreakStatement(Statement):
     """Break statement for loops."""
     location: Optional[SourceLocation] = None
@@ -313,7 +396,7 @@ class BreakStatement(Statement):
         return f"{self._indent(indent)}break"
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class ContinueStatement(Statement):
     """Continue statement for loops."""
     location: Optional[SourceLocation] = None
@@ -332,13 +415,14 @@ class Parameter:
     name: str
     type_annotation: Type
     default_value: Optional[Expression] = None
+    location: Optional[SourceLocation] = None
     
     def pretty_print(self, indent: int = 0) -> str:
         default_str = f" = {self.default_value.pretty_print()}" if self.default_value else ""
         return f"{self.name}: {self.type_annotation.pretty_print()}{default_str}"
 
 
-@dataclass
+@dataclass(eq=False)
 class FunctionDeclaration(Statement):
     """Function declaration with body."""
     name: str
@@ -376,7 +460,7 @@ class StructField:
         return f"{self.name}: {self.type_annotation.pretty_print()}{default_str}"
 
 
-@dataclass
+@dataclass(eq=False)
 class StructDeclaration(Statement):
     """Struct declaration."""
     name: str
@@ -401,7 +485,7 @@ class StructDeclaration(Statement):
 # Neural Network Specific AST Nodes
 # ============================================================================
 
-@dataclass
+@dataclass(eq=False)
 class LayerDefinition(Expression):
     """Neural network layer definition."""
     layer_type: str  # 'dense', 'conv2d', 'lstm', etc.
@@ -413,7 +497,7 @@ class LayerDefinition(Expression):
         return f"{self.layer_type}({params})"
 
 
-@dataclass
+@dataclass(eq=False)
 class ModelDefinition(Expression):
     """Neural network model definition."""
     name: str
@@ -438,7 +522,7 @@ class ModelDefinition(Expression):
 # Program Structure
 # ============================================================================
 
-@dataclass
+@dataclass(eq=False)
 class ImportStatement(Statement):
     """Import statement: import module."""
     module_path: str
@@ -455,7 +539,7 @@ class ImportStatement(Statement):
             return f"{self._indent(indent)}import {self.module_path}"
 
 
-@dataclass
+@dataclass(eq=False)
 class Program(ASTNode):
     """Root node representing a complete NEURO program."""
     statements: List[Statement]
@@ -510,7 +594,7 @@ class MatchCase:
         return '\n'.join(lines)
 
 
-@dataclass
+@dataclass(eq=False)
 class MatchExpression(Expression):
     """Pattern matching expression."""
     expression: Expression

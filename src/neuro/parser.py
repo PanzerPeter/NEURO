@@ -120,6 +120,9 @@ class NeuroParser:
         if not self.check(TokenType.RPAREN):
             parameters.append(self.parameter())
             while self.match(TokenType.COMMA):
+                # Skip any newlines after comma
+                while self.match(TokenType.NEWLINE):
+                    pass
                 parameters.append(self.parameter())
         
         self.consume(TokenType.RPAREN, "Expected ')' after parameters")
@@ -159,7 +162,20 @@ class NeuroParser:
         while not self.check(TokenType.RBRACE) and not self.is_at_end():
             if self.match(TokenType.NEWLINE):
                 continue
-            fields.append(self.struct_field())
+            
+            # Parse field
+            field = self.struct_field()
+            fields.append(field)
+            
+            # Handle optional comma and newlines
+            if self.match(TokenType.COMMA):
+                # Skip any newlines after comma
+                while self.match(TokenType.NEWLINE):
+                    pass
+            elif self.check(TokenType.NEWLINE):
+                # Allow newline without comma (for last field)
+                while self.match(TokenType.NEWLINE):
+                    pass
         
         self.consume(TokenType.RBRACE, "Expected '}' after struct fields")
         
@@ -286,7 +302,7 @@ class NeuroParser:
     def for_statement(self) -> ForStatement:
         """Parse a for statement."""
         variable = self.consume(TokenType.IDENTIFIER, "Expected variable name").value
-        self.consume(TokenType.IDENTIFIER, "Expected 'in'")  # TODO: add IN token
+        self.consume(TokenType.IN, "Expected 'in'")
         iterable = self.expression()
         body = self.statement()
         
@@ -391,13 +407,23 @@ class NeuroParser:
     
     def comparison(self) -> Expression:
         """Parse comparison expression."""
-        expr = self.term()
+        expr = self.range()
         
         while self.match(TokenType.GREATER, TokenType.GREATER_EQUAL,
                           TokenType.LESS, TokenType.LESS_EQUAL):
             operator = self.previous().value
-            right = self.term()
+            right = self.range()
             expr = BinaryOp(expr, operator, right, location=expr.location)
+        
+        return expr
+    
+    def range(self) -> Expression:
+        """Parse range expression."""
+        expr = self.term()
+        
+        if self.match(TokenType.RANGE):
+            end = self.term()
+            return RangeLiteral(expr, end, location=expr.location)
         
         return expr
     
@@ -471,7 +497,16 @@ class NeuroParser:
             return Literal(value, location=self.previous().location)
         
         if self.match(TokenType.IDENTIFIER):
-            return Identifier(self.previous().value, location=self.previous().location)
+            name = self.previous().value
+            location = self.previous().location
+            
+            # Check for struct initialization: TypeName { field: value, ... }
+            # Only parse as struct initializer if this looks like a type name (capitalized)
+            # and the next token after { is an identifier (for field name)
+            if self.check(TokenType.LBRACE) and self._looks_like_struct_initializer(name):
+                return self.struct_initializer(name, location)
+            
+            return Identifier(name, location=location)
         
         if self.match(TokenType.LPAREN):
             expr = self.expression()
@@ -482,8 +517,39 @@ class NeuroParser:
             return self.tensor_literal()
         
         # Neural network model definitions
-        if self.check(TokenType.NEURALNETWORK):
-            return self.model_definition()
+        if self.match(TokenType.NEURALNETWORK):
+            # This handles `NeuralNetwork<...>{...}` initializer expressions
+            location = self.previous().location
+            
+            # Parse generics
+            generics = None
+            if self.match(TokenType.LESS):
+                generics = []
+                # Simplified generic parsing for this context
+                while not self.check(TokenType.GREATER) and not self.is_at_end():
+                    if self.match(TokenType.COMMA): continue
+                    generics.append(self.type_annotation())
+                self.consume(TokenType.GREATER, "Expected '>' after model generics")
+            
+            self.consume(TokenType.LBRACE, "Expected '{' for model initializer")
+            
+            layers = []
+            while not self.check(TokenType.RBRACE) and not self.is_at_end():
+                if self.match(TokenType.NEWLINE):
+                    continue
+
+                # This check handles trailing newlines or commas before the closing brace
+                if self.check(TokenType.RBRACE):
+                    break
+                
+                layers.append(self.expression())
+                
+                # Consume optional comma after a layer definition
+                self.match(TokenType.COMMA)
+
+            self.consume(TokenType.RBRACE, "Expected '}' after model layers")
+            
+            return ModelDefinition(name=None, layers=layers, generics=generics, location=location)
         
         raise ParseError(
             f"Unexpected token: {self.peek().value}",
@@ -499,9 +565,19 @@ class NeuroParser:
         arguments = []
         
         if not self.check(TokenType.RPAREN):
-            arguments.append(self.expression())
-            while self.match(TokenType.COMMA):
-                arguments.append(self.expression())
+            while True:
+                # Check if this looks like a named argument (identifier = expression)
+                if self.check(TokenType.IDENTIFIER) and self.peek_ahead(1) and self.peek_ahead(1).type == TokenType.ASSIGN:
+                    name = self.advance().value
+                    self.consume(TokenType.ASSIGN, "Expected '=' after parameter name")
+                    value = self.expression()
+                    arguments.append(NamedArgument(name, value, location=self.previous().location))
+                else:
+                    # Parse regular positional arguments
+                    arguments.append(self.expression())
+                
+                if not self.match(TokenType.COMMA):
+                    break
         
         self.consume(TokenType.RPAREN, "Expected ')' after arguments")
         return FunctionCall(callee, arguments, location=callee.location)
@@ -510,13 +586,74 @@ class NeuroParser:
         """Parse tensor literal: [1, 2, 3] or [[1, 2], [3, 4]]."""
         elements = []
         
+        # Skip any newlines after opening bracket
+        while self.match(TokenType.NEWLINE):
+            pass
+        
         if not self.check(TokenType.RBRACKET):
             elements.append(self.expression())
             while self.match(TokenType.COMMA):
+                # Skip any newlines after comma
+                while self.match(TokenType.NEWLINE):
+                    pass
+                    
+                # Allow trailing comma
+                if self.check(TokenType.RBRACKET):
+                    break
+                    
                 elements.append(self.expression())
+        
+        # Skip any newlines before closing bracket
+        while self.match(TokenType.NEWLINE):
+            pass
         
         self.consume(TokenType.RBRACKET, "Expected ']' after tensor elements")
         return TensorLiteral(elements, location=self.previous().location)
+    
+    def struct_initializer(self, struct_name: str, location: SourceLocation) -> StructInitializer:
+        """Parse struct initializer: TypeName { field1: value1, field2: value2 }."""
+        self.consume(TokenType.LBRACE, "Expected '{' for struct initialization")
+        
+        fields = {}
+        
+        # Skip any newlines after opening brace
+        while self.match(TokenType.NEWLINE):
+            pass
+        
+        # Parse field initializers
+        if not self.check(TokenType.RBRACE):
+            # Parse first field
+            field_name = self.consume(TokenType.IDENTIFIER, "Expected field name").value
+            self.consume(TokenType.COLON, "Expected ':' after field name")
+            field_value = self.expression()
+            fields[field_name] = field_value
+            
+            # Parse remaining fields
+            while self.match(TokenType.COMMA):
+                # Skip any newlines after comma
+                while self.match(TokenType.NEWLINE):
+                    pass
+                    
+                # Allow trailing comma
+                if self.check(TokenType.RBRACE):
+                    break
+                    
+                field_name = self.consume(TokenType.IDENTIFIER, "Expected field name").value
+                self.consume(TokenType.COLON, "Expected ':' after field name")
+                field_value = self.expression()
+                fields[field_name] = field_value
+        
+        # Skip any newlines before closing brace
+        while self.match(TokenType.NEWLINE):
+            pass
+        
+        self.consume(TokenType.RBRACE, "Expected '}' after struct fields")
+        
+        return StructInitializer(
+            struct_type=struct_name,
+            fields=fields,
+            location=location
+        )
     
     def model_definition(self) -> ModelDefinition:
         """Parse neural network model definition."""
@@ -530,17 +667,42 @@ class NeuroParser:
             while self.match(TokenType.COMMA):
                 generics.append(self.type_annotation())
             self.consume(TokenType.GREATER, "Expected '>' after generics")
-        
-        name = self.consume(TokenType.IDENTIFIER, "Expected model name").value
-        self.consume(TokenType.LBRACE, "Expected '{' after model name")
+
+        # The name is optional for anonymous initializers
+        name = None
+        if self.check(TokenType.IDENTIFIER) and self.peek_ahead(1).type == TokenType.LBRACE:
+            name = self.consume(TokenType.IDENTIFIER, "Expected model name or '{'").value
+
+        self.consume(TokenType.LBRACE, "Expected '{' after model name or generics")
         
         # Parse layers
         layers = []
-        while not self.check(TokenType.RBRACE) and not self.is_at_end():
-            if self.match(TokenType.NEWLINE):
-                continue
-            layers.append(self.layer_definition())
+        # Skip leading newlines
+        while self.match(TokenType.NEWLINE):
+            pass
+
+        if not self.check(TokenType.RBRACE):
+            layers.append(self.expression())
+            # Consume optional comma after the first layer
+            self.match(TokenType.COMMA)
+
+            while not self.check(TokenType.RBRACE) and not self.is_at_end():
+                # Skip any newlines between layers
+                while self.match(TokenType.NEWLINE):
+                    pass
+                
+                # Handle trailing comma case
+                if self.check(TokenType.RBRACE):
+                    break
+
+                layers.append(self.expression())
+                # Consume optional comma
+                self.match(TokenType.COMMA)
         
+        # Skip trailing newlines
+        while self.match(TokenType.NEWLINE):
+            pass
+
         self.consume(TokenType.RBRACE, "Expected '}' after model layers")
         
         return ModelDefinition(
@@ -579,7 +741,24 @@ class NeuroParser:
     
     def parameter(self) -> Parameter:
         """Parse function parameter."""
-        name = self.consume(TokenType.IDENTIFIER, "Expected parameter name").value
+        # Allow keywords to be used as parameter names (soft keywords)
+        param_name_token: Optional[Token] = None
+        if self.check(TokenType.IDENTIFIER):
+            param_name_token = self.advance()
+            name = param_name_token.value
+        elif self.check(TokenType.MODEL):
+            # Allow 'model' keyword as parameter name
+            param_name_token = self.advance()
+            name = param_name_token.value
+        else:
+            # For any other keyword that might be used as a parameter name
+            current = self.peek()
+            if hasattr(current, 'value') and isinstance(current.value, str) and current.value.isalpha():
+                param_name_token = self.advance()
+                name = param_name_token.value
+            else:
+                raise ParseError("Expected parameter name", current.location)
+        
         self.consume(TokenType.COLON, "Expected ':' after parameter name")
         type_annotation = self.type_annotation()
         # type_annotation() will raise ParseError if no valid type is found
@@ -588,7 +767,8 @@ class NeuroParser:
         if self.match(TokenType.ASSIGN):
             default_value = self.expression()
         
-        return Parameter(name, type_annotation, default_value)
+        param_location = param_name_token.location if param_name_token else self.previous().location
+        return Parameter(name, type_annotation, default_value, location=param_location)
     
     def struct_field(self) -> StructField:
         """Parse struct field."""
@@ -624,10 +804,34 @@ class NeuroParser:
                 shape = []
                 shape.append(int(self.consume(TokenType.INTEGER, "Expected integer").value))
                 while self.match(TokenType.COMMA):
+                    # Allow trailing comma
+                    if self.check(TokenType.RPAREN):
+                        break
                     shape.append(int(self.consume(TokenType.INTEGER, "Expected integer").value))
                 self.consume(TokenType.RPAREN, "Expected ')' after shape")
             
             self.consume(TokenType.GREATER, "Expected '>' after tensor type")
+            return TensorType(element_type, shape, location=self.previous().location)
+        
+        if self.match(TokenType.NEURALNETWORK):
+            self.consume(TokenType.LESS, "Expected '<' after 'NeuralNetwork'")
+            element_type = self.type_annotation()
+            
+            shape = None
+            if self.match(TokenType.COMMA):
+                # Parse shape tuple
+                self.consume(TokenType.LPAREN, "Expected '(' for shape")
+                shape = []
+                shape.append(int(self.consume(TokenType.INTEGER, "Expected integer").value))
+                while self.match(TokenType.COMMA):
+                    # Allow trailing comma
+                    if self.check(TokenType.RPAREN):
+                        break
+                    shape.append(int(self.consume(TokenType.INTEGER, "Expected integer").value))
+                self.consume(TokenType.RPAREN, "Expected ')' after shape")
+            
+            self.consume(TokenType.GREATER, "Expected '>' after neural network type")
+            # For now, treat NeuralNetwork similar to Tensor, but we could create a specific type
             return TensorType(element_type, shape, location=self.previous().location)
         
         if self.match(TokenType.IDENTIFIER):
@@ -645,6 +849,9 @@ class NeuroParser:
                     shape = []
                     shape.append(int(self.consume(TokenType.INTEGER, "Expected integer").value))
                     while self.match(TokenType.COMMA):
+                        # Allow trailing comma
+                        if self.check(TokenType.RPAREN):
+                            break
                         shape.append(int(self.consume(TokenType.INTEGER, "Expected integer").value))
                     self.consume(TokenType.RPAREN, "Expected ')' after shape")
                 
@@ -704,6 +911,13 @@ class NeuroParser:
         """Return current token without advancing."""
         return self.tokens[self.current]
     
+    def peek_ahead(self, offset: int) -> Optional[Token]:
+        """Look ahead by offset tokens."""
+        index = self.current + offset
+        if index >= len(self.tokens):
+            return None
+        return self.tokens[index]
+    
     def previous(self) -> Token:
         """Return previous token."""
         return self.tokens[self.current - 1]
@@ -741,4 +955,28 @@ class NeuroParser:
     def is_simple_program(self) -> bool:
         """Check if this appears to be a simple single-statement program (for better error reporting)."""
         # If we have fewer than 10 tokens total, treat it as a simple program
-        return len(self.tokens) <= 10 
+        return len(self.tokens) <= 10
+    
+    def _looks_like_struct_initializer(self, name: str) -> bool:
+        """Check if an identifier followed by { looks like a struct initializer."""
+        # Basic heuristic: type names are usually capitalized
+        if not name[0].isupper():
+            return False
+        
+        # Look ahead to see if there's an identifier after the opening brace
+        # Skip any newlines when looking ahead
+        offset = 1
+        while self.peek_ahead(offset) and self.peek_ahead(offset).type == TokenType.NEWLINE:
+            offset += 1
+        
+        # Check if there's an identifier after skipping newlines
+        if self.peek_ahead(offset) and self.peek_ahead(offset).type == TokenType.IDENTIFIER:
+            # Check if there's a colon after that identifier
+            if self.peek_ahead(offset + 1) and self.peek_ahead(offset + 1).type == TokenType.COLON:
+                return True
+        
+        # If the brace is immediately followed by } (possibly with newlines), it's probably a struct
+        if self.peek_ahead(offset) and self.peek_ahead(offset).type == TokenType.RBRACE:
+            return True
+        
+        return False 

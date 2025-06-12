@@ -90,6 +90,12 @@ Examples:
         help='Enable verbose output'
     )
     
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Enable debug mode (implies verbose) for detailed internal logging and tracebacks'
+    )
+    
     return parser
 
 
@@ -111,6 +117,10 @@ def compile_file(source_path: Path, args: argparse.Namespace) -> int:
         
         with open(source_path, 'r', encoding='utf-8') as f:
             source_code = f.read()
+        
+        # If debug mode is on, ensure verbose is also on
+        if args.debug:
+            args.verbose = True
         
         # Phase 1: Lexical Analysis
         if args.verbose:
@@ -143,31 +153,37 @@ def compile_file(source_path: Path, args: argparse.Namespace) -> int:
         
         compiler = NeuroCompiler(
             optimization_level=int(args.optimize),
-            verbose=args.verbose
+            verbose=args.verbose,
+            debug=args.debug
         )
         
         # Determine output file name
         output_path = args.output
         if output_path is None:
-            output_path = source_path.with_suffix('.exe' if sys.platform == 'win32' else '')
+            output_path = str(source_path.with_suffix('.exe' if sys.platform == 'win32' else ''))
         
         # Compile to executable
         compiler.compile(ast, output_path, emit_llvm_ir=args.emit_llvm_ir)
         
-        if args.verbose:
+        # This message is now conditional on not emitting IR, as the function returns early
+        if not args.emit_llvm_ir:
             print(f"Compilation successful: {output_path}")
         
         return 0
         
     except NeuroError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        # Provide a cleaner error message for compilation phases
+        print(f"Error: {e.message}", file=sys.stderr)
         return 1
     except FileNotFoundError:
         print(f"Error: File not found: {source_path}", file=sys.stderr)
         return 1
     except Exception as e:
         print(f"Internal compiler error: {e}", file=sys.stderr)
-        if args.verbose:
+        if args.debug:
+            import traceback
+            traceback.print_exc()
+        elif args.verbose:
             import traceback
             traceback.print_exc()
         return 1

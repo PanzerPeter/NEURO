@@ -9,7 +9,7 @@ from typing import Optional, List, Any
 from dataclasses import dataclass
 
 
-@dataclass
+@dataclass(frozen=True)
 class SourceLocation:
     """Represents a location in source code for error reporting."""
     filename: str

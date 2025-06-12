@@ -18,6 +18,7 @@ from typing import Optional, List, Dict, Any
 
 from .ast_nodes import Program, ASTNode
 from .errors import CompilerError, SourceLocation
+from .type_checker import TypeChecker
 
 
 class NeuroCompiler:
@@ -28,16 +29,18 @@ class NeuroCompiler:
     including type checking, optimization, and code generation.
     """
     
-    def __init__(self, optimization_level: int = 1, verbose: bool = False):
+    def __init__(self, optimization_level: int = 1, verbose: bool = False, debug: bool = False):
         """
         Initialize the NEURO compiler.
         
         Args:
             optimization_level: Optimization level (0-3)
             verbose: Enable verbose output
+            debug: Enable debug mode output
         """
         self.optimization_level = optimization_level
         self.verbose = verbose
+        self.debug = debug
         
         # Compilation state
         self.symbol_table: Dict[str, Any] = {}
@@ -128,16 +131,14 @@ class NeuroCompiler:
     
     def _type_check(self, ast: Program) -> None:
         """Perform type checking and inference on the AST."""
-        # For now, this is a placeholder implementation
-        # In a full implementation, this would:
-        # 1. Build symbol tables
-        # 2. Resolve type annotations
-        # 3. Perform type inference
-        # 4. Check type compatibility
-        # 5. Validate tensor shapes
+        # Create type checker instance
+        type_checker = TypeChecker(verbose=self.verbose, debug=self.debug)
+        
+        # Perform comprehensive type checking
+        self.type_cache = type_checker.check_program(ast)
         
         if self.verbose:
-            print("  ✓ Type checking completed (placeholder)")
+            print(f"  ✓ Type checking completed - {len(self.type_cache)} types inferred")
     
     # ========================================================================
     # Phase 3: Optimization
@@ -214,16 +215,22 @@ class NeuroCompiler:
             result = subprocess.run(clang_cmd, capture_output=True, text=True)
             
             if result.returncode != 0:
-                # Fallback: create a simple C program and compile it
-                if self.verbose:
-                    print("  LLVM compilation failed, using C fallback")
-                self._create_c_fallback(output_path)
+                error_message = f"""LLVM compilation failed.
+Command: {' '.join(clang_cmd)}
+Exit Code: {result.returncode}
+--- Clang Stdout: ---
+{result.stdout}
+--- Clang Stderr: ---
+{result.stderr}
+"""
+                raise CompilerError(error_message)
             
         except FileNotFoundError:
-            # LLVM/clang not available, create simple executable
-            if self.verbose:
-                print("  LLVM not available, creating simple executable")
-            self._create_c_fallback(output_path)
+            # LLVM/clang not available
+            raise CompilerError(
+                "Compiler command 'clang' not found. "
+                "Please install LLVM and ensure 'clang' is in your system's PATH."
+            )
         
         # Clean up IR file
         if ir_file.exists():

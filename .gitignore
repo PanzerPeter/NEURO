@@ -39,6 +39,8 @@ ENV/
 .project
 .pydevproject
 .settings/
+debug/
+bin/
 
 
 # NEURO specific

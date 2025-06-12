@@ -35,6 +35,7 @@ class TokenType(Enum):
     ELSE = auto()
     ELIF = auto()
     FOR = auto()
+    IN = auto()
     WHILE = auto()
     BREAK = auto()
     CONTINUE = auto()
@@ -175,6 +176,7 @@ class NeuroLexer:
         'else': TokenType.ELSE,
         'elif': TokenType.ELIF,
         'for': TokenType.FOR,
+        'in': TokenType.IN,
         'while': TokenType.WHILE,
         'break': TokenType.BREAK,
         'continue': TokenType.CONTINUE,
