@@ -1,211 +1,276 @@
-#!/usr/bin/env python3
 """
-NEURO Compiler (neurc) - Main Entry Point
-
-The NEURO compiler transforms .nr source files into optimized native code
-through multiple compilation phases:
-1. Lexical Analysis (Tokenization)
-2. Parsing (AST Generation)
-3. Type Checking & Inference
-4. IR Generation
-5. Optimization
-6. Code Generation (LLVM)
-
-Usage:
-    neurc <source_file.nr> [options]
-    neurc --help
+NEURO Programming Language Compiler
+Command-line interface for the NEURO compiler.
 """
 
 import sys
 import argparse
-from pathlib import Path
-from typing import Optional
+import os
+from typing import List, Optional
 
-from .lexer import NeuroLexer
-from .parser import NeuroParser
-from .ast_nodes import Program
-from .compiler import NeuroCompiler
+from .compiler import NeuroCompiler, CompileOptions, OptimizationLevel
 from .errors import NeuroError
 
 
-def setup_argument_parser() -> argparse.ArgumentParser:
-    """Configure command line argument parsing for the NEURO compiler."""
+def create_parser() -> argparse.ArgumentParser:
+    """Create the command-line argument parser."""
     parser = argparse.ArgumentParser(
         prog='neurc',
         description='NEURO Programming Language Compiler',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  neurc hello.nr                    # Compile to executable
-  neurc model.nr -O2                # Compile with optimizations
-  neurc --emit-ast program.nr       # Show AST for debugging
-  neurc --emit-llvm-ir program.nr   # Show LLVM IR
-        """
+        epilog='''Examples:
+  neurc hello.nr                 # Compile to executable
+  neurc hello.nr -o hello        # Compile with custom output name
+  neurc hello.nr --emit-llvm-ir  # Generate LLVM IR
+  neurc hello.nr -O3 --verbose   # Compile with aggressive optimization
+  neurc hello.nr --emit-tokens   # Show lexer tokens for debugging
+'''
     )
     
     # Input file
     parser.add_argument(
-        'source_file',
-        type=str,
-        help='NEURO source file (.nr) to compile'
+        'input',
+        help='NEURO source file to compile'
     )
     
     # Output options
     parser.add_argument(
         '-o', '--output',
-        type=str,
-        help='Output file name (default: inferred from input)'
+        help='Output file name'
     )
     
-    # Optimization levels
     parser.add_argument(
-        '-O', '--optimize',
-        choices=['0', '1', '2', '3'],
-        default='1',
-        help='Optimization level (default: 1)'
+        '--target',
+        choices=['cpu', 'cuda', 'opencl', 'metal'],
+        default='cpu',
+        help='Target platform (default: cpu)'
     )
     
-    # Debug and development options
     parser.add_argument(
-        '--emit-ast',
-        action='store_true',
-        help='Print the Abstract Syntax Tree and exit'
+        '--format',
+        choices=['executable', 'llvm-ir', 'assembly'],
+        default='executable',
+        help='Output format (default: executable)'
     )
     
+    # Optimization options
+    parser.add_argument(
+        '-O0', '--no-optimization',
+        action='store_const',
+        const=OptimizationLevel.O0,
+        dest='optimization',
+        help='Disable optimizations'
+    )
+    
+    parser.add_argument(
+        '-O1', '--basic-optimization',
+        action='store_const',
+        const=OptimizationLevel.O1,
+        dest='optimization',
+        help='Basic optimizations'
+    )
+    
+    parser.add_argument(
+        '-O2', '--standard-optimization',
+        action='store_const',
+        const=OptimizationLevel.O2,
+        dest='optimization',
+        help='Standard optimizations (default)'
+    )
+    
+    parser.add_argument(
+        '-O3', '--aggressive-optimization',
+        action='store_const',
+        const=OptimizationLevel.O3,
+        dest='optimization',
+        help='Aggressive optimizations'
+    )
+    
+    # Debug and analysis options
     parser.add_argument(
         '--emit-tokens',
         action='store_true',
-        help='Print lexer tokens and exit'
+        help='Print lexer tokens'
+    )
+    
+    parser.add_argument(
+        '--emit-ast',
+        action='store_true',
+        help='Print abstract syntax tree'
     )
     
     parser.add_argument(
         '--emit-llvm-ir',
         action='store_true',
-        help='Print LLVM IR and exit'
-    )
-    
-    parser.add_argument(
-        '--verbose', '-v',
-        action='store_true',
-        help='Enable verbose output'
+        help='Print LLVM IR'
     )
     
     parser.add_argument(
         '--debug',
         action='store_true',
-        help='Enable debug mode (implies verbose) for detailed internal logging and tracebacks'
+        help='Include debug information'
     )
+    
+    parser.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        help='Verbose output'
+    )
+    
+    parser.add_argument(
+        '--version',
+        action='version',
+        version='NEURO Compiler 0.1.0'
+    )
+    
+    # Set default optimization level
+    parser.set_defaults(optimization=OptimizationLevel.O2)
     
     return parser
 
 
-def compile_file(source_path: Path, args: argparse.Namespace) -> int:
-    """
-    Compile a single NEURO source file through all compilation phases.
+def validate_arguments(args: argparse.Namespace) -> bool:
+    """Validate command-line arguments."""
+    # Check input file exists
+    if not os.path.exists(args.input):
+        print(f"Error: Input file '{args.input}' not found", file=sys.stderr)
+        return False
     
-    Args:
-        source_path: Path to the .nr source file
-        args: Parsed command line arguments
-        
-    Returns:
-        Exit code (0 for success, non-zero for error)
-    """
+    # Check input file has .nr extension
+    if not args.input.endswith('.nr'):
+        print(f"Warning: Input file '{args.input}' does not have .nr extension", file=sys.stderr)
+    
+    # Check output directory is writable if output specified
+    if args.output:
+        output_dir = os.path.dirname(os.path.abspath(args.output))
+        if not os.access(output_dir, os.W_OK):
+            print(f"Error: Cannot write to output directory '{output_dir}'", file=sys.stderr)
+            return False
+    
+    return True
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    """Main entry point for the NEURO compiler."""
+    parser = create_parser()
+    args = parser.parse_args(argv)
+    
+    # Validate arguments
+    if not validate_arguments(args):
+        return 1
+    
     try:
-        # Read source code
-        if args.verbose:
-            print(f"Reading source file: {source_path}")
-        
-        with open(source_path, 'r', encoding='utf-8') as f:
-            source_code = f.read()
-        
-        # If debug mode is on, ensure verbose is also on
-        if args.debug:
-            args.verbose = True
-        
-        # Phase 1: Lexical Analysis
-        if args.verbose:
-            print("Phase 1: Lexical Analysis")
-        
-        lexer = NeuroLexer()
-        tokens = lexer.tokenize(source_code, str(source_path))
-        
-        if args.emit_tokens:
-            print("=== TOKENS ===")
-            for token in tokens:
-                print(f"{token.type.name:<15} {token.value!r:<20} at {token.line}:{token.column}")
-            return 0
-        
-        # Phase 2: Parsing
-        if args.verbose:
-            print("Phase 2: Parsing")
-        
-        parser = NeuroParser()
-        ast = parser.parse(tokens)
-        
-        if args.emit_ast:
-            print("=== ABSTRACT SYNTAX TREE ===")
-            print(ast.pretty_print())
-            return 0
-        
-        # Phase 3+: Full Compilation
-        if args.verbose:
-            print("Phase 3+: Type Checking, IR Generation, and Code Generation")
-        
-        compiler = NeuroCompiler(
-            optimization_level=int(args.optimize),
+        # Create compile options
+        options = CompileOptions(
+            optimization_level=args.optimization,
+            target_platform=args.target,
+            output_format=args.format,
+            debug_info=args.debug,
+            emit_tokens=args.emit_tokens,
+            emit_ast=args.emit_ast,
+            emit_llvm_ir=args.emit_llvm_ir,
             verbose=args.verbose,
-            debug=args.debug
+            output_file=args.output
         )
         
-        # Determine output file name
-        output_path = args.output
-        if output_path is None:
-            output_path = str(source_path.with_suffix('.exe' if sys.platform == 'win32' else ''))
+        # Create compiler and compile
+        compiler = NeuroCompiler(options)
+        result = compiler.compile_file(args.input)
         
-        # Compile to executable
-        compiler.compile(ast, output_path, emit_llvm_ir=args.emit_llvm_ir)
-        
-        # This message is now conditional on not emitting IR, as the function returns early
-        if not args.emit_llvm_ir:
-            print(f"Compilation successful: {output_path}")
-        
-        return 0
-        
+        # Print results
+        if result.success:
+            if args.verbose:
+                print(f"Compilation successful!")
+                if result.output_file:
+                    print(f"Output written to: {result.output_file}")
+                print(f"Compilation time: {result.compilation_time:.3f}s")
+            
+            # Print warnings if any
+            if result.warnings:
+                print(f"\nWarnings ({len(result.warnings)}):", file=sys.stderr)
+                for warning in result.warnings:
+                    print(f"  {warning}", file=sys.stderr)
+            
+            return 0
+        else:
+            print(f"Compilation failed!", file=sys.stderr)
+            
+            # Print errors
+            if result.errors:
+                print(f"\nErrors ({len(result.errors)}):", file=sys.stderr)
+                for error in result.errors:
+                    print(f"  {error}", file=sys.stderr)
+            
+            return 1
+    
+    except KeyboardInterrupt:
+        print("\nCompilation interrupted by user", file=sys.stderr)
+        return 130
+    
     except NeuroError as e:
-        # Provide a cleaner error message for compilation phases
-        print(f"Error: {e.message}", file=sys.stderr)
+        print(f"Compiler error: {e}", file=sys.stderr)
         return 1
-    except FileNotFoundError:
-        print(f"Error: File not found: {source_path}", file=sys.stderr)
-        return 1
+    
     except Exception as e:
-        print(f"Internal compiler error: {e}", file=sys.stderr)
-        if args.debug:
-            import traceback
-            traceback.print_exc()
-        elif args.verbose:
+        print(f"Internal error: {e}", file=sys.stderr)
+        if args.verbose:
             import traceback
             traceback.print_exc()
         return 1
 
 
-def main() -> int:
-    """Main entry point for the NEURO compiler."""
-    parser = setup_argument_parser()
-    args = parser.parse_args()
+def run_interactive_mode() -> None:
+    """Run NEURO compiler in interactive mode."""
+    print("NEURO Programming Language Compiler")
+    print("Interactive Mode - Type 'exit' to quit")
+    print()
     
-    # Validate input file
-    source_path = Path(args.source_file)
-    if not source_path.exists():
-        print(f"Error: File does not exist: {source_path}", file=sys.stderr)
-        return 1
+    while True:
+        try:
+            # Get input
+            line = input("neuro> ").strip()
+            
+            if line in ['exit', 'quit', 'q']:
+                break
+            
+            if not line:
+                continue
+            
+            if line.startswith('help'):
+                print("Available commands:")
+                print("  compile <file>  - Compile a NEURO file")
+                print("  tokens <file>   - Show tokens for a file")
+                print("  ast <file>      - Show AST for a file")
+                print("  help            - Show this help")
+                print("  exit            - Exit interactive mode")
+                continue
+            
+            parts = line.split()
+            command = parts[0]
+            
+            if command == 'compile' and len(parts) > 1:
+                filename = parts[1]
+                main([filename, '--verbose'])
+            elif command == 'tokens' and len(parts) > 1:
+                filename = parts[1]
+                main([filename, '--emit-tokens'])
+            elif command == 'ast' and len(parts) > 1:
+                filename = parts[1]
+                main([filename, '--emit-ast'])
+            else:
+                print(f"Unknown command: {line}")
+                print("Type 'help' for available commands")
+        
+        except KeyboardInterrupt:
+            print("\nType 'exit' to quit")
+        except EOFError:
+            break
     
-    if source_path.suffix != '.nr':
-        print(f"Error: Expected .nr file, got: {source_path.suffix}", file=sys.stderr)
-        return 1
-    
-    return compile_file(source_path, args)
+    print("\nGoodbye!")
 
 
 if __name__ == '__main__':
-    sys.exit(main()) 
+    # Check if running interactively
+    if len(sys.argv) == 1:
+        run_interactive_mode()
+    else:
+        sys.exit(main()) 

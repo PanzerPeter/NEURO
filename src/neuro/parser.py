@@ -1,982 +1,775 @@
 """
-NEURO Parser
-
-Converts tokens from the lexer into an Abstract Syntax Tree (AST).
-Implements a recursive descent parser for the NEURO programming language.
-
-Grammar (simplified):
-    program := statement*
-    statement := function_decl | struct_decl | var_decl | expr_stmt | control_flow
-    expression := assignment | logical_or
-    assignment := logical_or ('=' assignment)?
-    logical_or := logical_and ('||' logical_and)*
-    logical_and := equality ('&&' equality)*
-    equality := comparison (('==' | '!=') comparison)*
-    comparison := term (('<' | '<=' | '>' | '>=') term)*
-    term := factor (('+' | '-') factor)*
-    factor := unary (('*' | '/' | '%' | '@') unary)*
-    unary := ('!' | '-' | '~') unary | postfix
-    postfix := primary ('.' IDENTIFIER | '[' expression ']' | '(' arguments? ')')*
-    primary := literal | identifier | '(' expression ')' | tensor_literal
+Parsing Slice
+Converts tokens into an Abstract Syntax Tree for the NEURO language.
 """
 
-from typing import List, Optional, Union, Dict, Any
+from typing import List, Optional, Union, Any
 from .lexer import Token, TokenType
 from .ast_nodes import *
-from .errors import ParseError, SourceLocation
+from .errors import ErrorReporter, NeuroSyntaxError, SourceLocation
 
 
 class NeuroParser:
-    """
-    Recursive descent parser for the NEURO programming language.
+    """Parser for the NEURO programming language."""
     
-    Converts a stream of tokens into an Abstract Syntax Tree (AST)
-    that represents the structure of the program.
-    """
-    
-    def __init__(self):
-        self.tokens: List[Token] = []
-        self.current = 0
-    
-    def parse(self, tokens: List[Token]) -> Program:
-        """
-        Parse a list of tokens into a Program AST node.
-        
-        Args:
-            tokens: List of tokens from the lexer
-            
-        Returns:
-            Program AST node
-            
-        Raises:
-            ParseError: If the tokens don't form a valid program
-        """
+    def __init__(self, tokens: List[Token]):
         self.tokens = tokens
         self.current = 0
-        self._statements_parsed = 0  # Track number of successfully parsed statements
-
+        self.error_reporter = ErrorReporter()
+    
+    def current_token(self) -> Token:
+        """Get the current token."""
+        if self.current >= len(self.tokens):
+            return self.tokens[-1]  # Return EOF token
+        return self.tokens[self.current]
+    
+    def peek_token(self, offset: int = 1) -> Token:
+        """Peek at a token ahead."""
+        pos = self.current + offset
+        if pos >= len(self.tokens):
+            return self.tokens[-1]  # Return EOF token
+        return self.tokens[pos]
+    
+    def advance(self) -> Token:
+        """Move to the next token and return the current one."""
+        token = self.current_token()
+        if self.current < len(self.tokens) - 1:
+            self.current += 1
+        return token
+    
+    def match(self, *token_types: TokenType) -> bool:
+        """Check if current token matches any of the given types."""
+        return self.current_token().type in token_types
+    
+    def check(self, token_type: TokenType) -> bool:
+        """Check if current token is of given type."""
+        return self.current_token().type == token_type
+    
+    def consume(self, token_type: TokenType, message: str = "") -> Token:
+        """Consume a token of given type or report error."""
+        if self.check(token_type):
+            return self.advance()
+        
+        current = self.current_token()
+        if not message:
+            message = f"Expected {token_type.name}"
+        
+        self.error_reporter.syntax_error(
+            message,
+            current.location,
+            expected=token_type.name,
+            found=current.type.name
+        )
+        return current
+    
+    def skip_newlines(self) -> None:
+        """Skip newline tokens."""
+        while self.match(TokenType.NEWLINE, TokenType.COMMENT):
+            self.advance()
+    
+    def synchronize(self) -> None:
+        """Synchronize after a parse error."""
+        self.advance()
+        
+        while not self.check(TokenType.EOF):
+            if self.tokens[self.current - 1].type == TokenType.NEWLINE:
+                return
+            
+            if self.match(TokenType.FUNC, TokenType.STRUCT, TokenType.LET,
+                         TokenType.IF, TokenType.FOR, TokenType.RETURN):
+                return
+            
+            self.advance()
+    
+    # =========================================================================
+    # Main parsing methods
+    # =========================================================================
+    
+    def parse(self) -> Program:
+        """Parse the tokens into a program AST."""
+        declarations = []
         statements = []
         
-        while not self.is_at_end():
-            # Skip newlines at the top level
-            if self.check(TokenType.NEWLINE):
-                self.advance()
-                continue
-            
-            stmt = self.declaration()
-            if stmt:
-                statements.append(stmt)
-                self._statements_parsed += 1
-
-        return Program(statements)
+        self.skip_newlines()
+        
+        while not self.check(TokenType.EOF):
+            try:
+                if self.match(TokenType.FUNC):
+                    declarations.append(self.parse_function_declaration())
+                elif self.match(TokenType.STRUCT):
+                    declarations.append(self.parse_struct_declaration())
+                elif self.match(TokenType.LET):
+                    # Global variable declaration
+                    stmt = self.parse_variable_declaration()
+                    statements.append(stmt)
+                else:
+                    # Top-level expression or statement
+                    stmt = self.parse_statement()
+                    if stmt:
+                        statements.append(stmt)
+                
+                self.skip_newlines()
+                
+            except NeuroSyntaxError:
+                self.synchronize()
+        
+        if self.error_reporter.has_errors():
+            self.error_reporter.print_errors()
+            raise NeuroSyntaxError("Parsing failed")
+        
+        return Program(declarations, statements)
     
-    # ========================================================================
-    # Declaration Parsing
-    # ========================================================================
+    # =========================================================================
+    # Declaration parsing
+    # =========================================================================
     
-    def declaration(self) -> Optional[Statement]:
-        """Parse a declaration (function, struct, variable) or statement."""
-        try:
-            if self.match(TokenType.FUNC):
-                return self.function_declaration()
-            if self.match(TokenType.STRUCT):
-                return self.struct_declaration()
-            if self.match(TokenType.LET):
-                return self.variable_declaration()
-            if self.match(TokenType.IMPORT):
-                return self.import_statement()
-            
-            return self.statement()
-        except ParseError as e:
-            # If this is a simple program and we haven't successfully parsed any statements yet,
-            # re-raise the error instead of recovering (for better error reporting in simple cases)
-            if len(self.tokens) <= 10 and self._statements_parsed == 0:
-                raise e
-            
-            # Otherwise, synchronize after errors for error recovery
-            self.synchronize()
-            return None
-    
-    def function_declaration(self) -> FunctionDeclaration:
+    def parse_function_declaration(self) -> FunctionDeclaration:
         """Parse a function declaration."""
-        # Check for @gpu attribute
-        is_gpu = False
-        if self.previous().type == TokenType.GPU:
-            is_gpu = True
-            self.consume(TokenType.FUNC, "Expected 'func' after @gpu")
+        location = self.current_token().location
+        self.consume(TokenType.FUNC)
         
-        # Ensure we have a function name - this will raise ParseError if missing
-        name = self.consume(TokenType.IDENTIFIER, "Expected function name").value
+        name = self.consume(TokenType.IDENTIFIER).value
         
-        # Parse generic parameters
-        generic_params = None
-        if self.check(TokenType.LESS):
-            generic_params = self.generic_parameters()
-        
-        self.consume(TokenType.LPAREN, "Expected '(' after function name")
+        # Parse optional type parameters
+        type_params = None
+        if self.match(TokenType.LESS_THAN):
+            self.advance()
+            type_params = []
+            
+            type_params.append(self.consume(TokenType.IDENTIFIER).value)
+            while self.match(TokenType.COMMA):
+                self.advance()
+                type_params.append(self.consume(TokenType.IDENTIFIER).value)
+            
+            self.consume(TokenType.GREATER_THAN)
         
         # Parse parameters
+        self.consume(TokenType.LPAREN)
         parameters = []
-        if not self.check(TokenType.RPAREN):
-            parameters.append(self.parameter())
+        
+        if not self.match(TokenType.RPAREN):
+            parameters.append(self.parse_parameter())
             while self.match(TokenType.COMMA):
-                # Skip any newlines after comma
-                while self.match(TokenType.NEWLINE):
-                    pass
-                parameters.append(self.parameter())
+                self.advance()
+                parameters.append(self.parse_parameter())
         
-        self.consume(TokenType.RPAREN, "Expected ')' after parameters")
+        self.consume(TokenType.RPAREN)
         
-        # Parse return type
+        # Parse optional return type
         return_type = None
         if self.match(TokenType.ARROW):
-            return_type = self.type_annotation()
+            self.advance()
+            return_type = self.parse_type()
         
-        # Parse body - consume opening brace first
-        self.consume(TokenType.LBRACE, "Expected '{' before function body")
-        body = self.block_statement()
+        # Parse body
+        self.consume(TokenType.LBRACE)
+        self.skip_newlines()
+        
+        body = []
+        while not self.match(TokenType.RBRACE) and not self.check(TokenType.EOF):
+            stmt = self.parse_statement()
+            if stmt:
+                body.append(stmt)
+            self.skip_newlines()
+        
+        self.consume(TokenType.RBRACE)
         
         return FunctionDeclaration(
             name=name,
+            type_params=type_params,
             parameters=parameters,
             return_type=return_type,
             body=body,
-            generic_params=generic_params,
-            is_gpu=is_gpu,
-            location=self.previous().location
+            is_generic=type_params is not None,
+            location=location
         )
     
-    def struct_declaration(self) -> StructDeclaration:
+    def parse_parameter(self) -> Parameter:
+        """Parse a function parameter."""
+        name = self.consume(TokenType.IDENTIFIER).value
+        
+        type_annotation = None
+        if self.match(TokenType.COLON):
+            self.advance()
+            type_annotation = self.parse_type()
+        
+        default_value = None
+        if self.match(TokenType.ASSIGN):
+            self.advance()
+            default_value = self.parse_expression()
+        
+        return Parameter(name, type_annotation, default_value)
+    
+    def parse_struct_declaration(self) -> StructDeclaration:
         """Parse a struct declaration."""
-        name = self.consume(TokenType.IDENTIFIER, "Expected struct name").value
+        location = self.current_token().location
+        self.consume(TokenType.STRUCT)
         
-        # Parse generic parameters
-        generic_params = None
-        if self.check(TokenType.LESS):
-            generic_params = self.generic_parameters()
+        name = self.consume(TokenType.IDENTIFIER).value
         
-        self.consume(TokenType.LBRACE, "Expected '{' after struct name")
+        # Parse optional type parameters
+        type_params = None
+        if self.match(TokenType.LESS_THAN):
+            self.advance()
+            type_params = []
+            
+            type_params.append(self.consume(TokenType.IDENTIFIER).value)
+            while self.match(TokenType.COMMA):
+                self.advance()
+                type_params.append(self.consume(TokenType.IDENTIFIER).value)
+            
+            self.consume(TokenType.GREATER_THAN)
         
         # Parse fields
-        fields = []
-        while not self.check(TokenType.RBRACE) and not self.is_at_end():
-            if self.match(TokenType.NEWLINE):
-                continue
-            
-            # Parse field
-            field = self.struct_field()
-            fields.append(field)
-            
-            # Handle optional comma and newlines
-            if self.match(TokenType.COMMA):
-                # Skip any newlines after comma
-                while self.match(TokenType.NEWLINE):
-                    pass
-            elif self.check(TokenType.NEWLINE):
-                # Allow newline without comma (for last field)
-                while self.match(TokenType.NEWLINE):
-                    pass
+        self.consume(TokenType.LBRACE)
+        self.skip_newlines()
         
-        self.consume(TokenType.RBRACE, "Expected '}' after struct fields")
+        fields = []
+        while not self.match(TokenType.RBRACE) and not self.check(TokenType.EOF):
+            field_name = self.consume(TokenType.IDENTIFIER).value
+            self.consume(TokenType.COLON)
+            field_type = self.parse_type()
+            
+            fields.append(StructField(field_name, field_type))
+            
+            if self.match(TokenType.COMMA):
+                self.advance()
+            
+            self.skip_newlines()
+        
+        self.consume(TokenType.RBRACE)
         
         return StructDeclaration(
             name=name,
+            type_params=type_params,
             fields=fields,
-            generic_params=generic_params,
-            location=self.previous().location
+            is_generic=type_params is not None,
+            location=location
         )
     
-    def variable_declaration(self) -> VariableDeclaration:
-        """Parse a variable declaration."""
-        is_mutable = self.match(TokenType.MUT)
-        name = self.consume(TokenType.IDENTIFIER, "Expected variable name").value
+    # =========================================================================
+    # Statement parsing
+    # =========================================================================
+    
+    def parse_statement(self) -> Optional[Statement]:
+        """Parse a statement."""
+        if self.match(TokenType.LET):
+            return self.parse_variable_declaration()
+        if self.match(TokenType.IF):
+            return self.parse_if_statement()
+        if self.match(TokenType.FOR):
+            return self.parse_for_statement()
+        if self.match(TokenType.RETURN):
+            return self.parse_return_statement()
+        if self.match(TokenType.LBRACE):
+            return self.parse_block_statement()
         
-        # Parse type annotation
+        # Fallback to expression statement, which can include assignment
+        expr = self.parse_expression()
+        
+        if self.match(TokenType.ASSIGN):
+            # It's an assignment statement
+            self.advance()
+            value = self.parse_expression()
+            
+            # The target must be a valid l-value (identifier, member access, index)
+            if isinstance(expr, (IdentifierExpression, MemberExpression, IndexExpression)):
+                return AssignmentStatement(expr, value, expr.location)
+            else:
+                self.error_reporter.syntax_error("Invalid assignment target", expr.location)
+                return None
+        
+        return ExpressionStatement(expr, expr.location)
+    
+    def parse_variable_declaration(self) -> VariableDeclaration:
+        """Parse a variable declaration."""
+        location = self.current_token().location
+        self.consume(TokenType.LET)
+        
+        name = self.consume(TokenType.IDENTIFIER).value
+        
         type_annotation = None
         if self.match(TokenType.COLON):
-            type_annotation = self.type_annotation()
+            self.advance()
+            type_annotation = self.parse_type()
         
-        # Parse initializer
         initializer = None
         if self.match(TokenType.ASSIGN):
-            initializer = self.expression()
-            # Validate that we actually got an expression
-            if initializer is None:
-                raise ParseError("Expected expression after '='", self.previous().location)
+            self.advance()
+            initializer = self.parse_expression()
         
-        return VariableDeclaration(
-            name=name,
-            type_annotation=type_annotation,
-            initializer=initializer,
-            is_mutable=is_mutable,
-            location=self.previous().location
-        )
+        return VariableDeclaration(name, type_annotation, initializer, True, location)
     
-    def import_statement(self) -> ImportStatement:
-        """Parse an import statement."""
-        # Handle different import forms:
-        # import module
-        # import module as alias
-        # import {item1, item2} from module
-        
-        if self.check(TokenType.LBRACE):
-            # Selective import: import {items} from module
-            self.advance()  # consume '{'
-            items = []
-            items.append(self.consume(TokenType.IDENTIFIER, "Expected identifier").value)
-            while self.match(TokenType.COMMA):
-                items.append(self.consume(TokenType.IDENTIFIER, "Expected identifier").value)
-            
-            self.consume(TokenType.RBRACE, "Expected '}' after import items")
-            self.consume(TokenType.IDENTIFIER, "Expected 'from'")  # TODO: add FROM token
-            module_path = self.consume(TokenType.IDENTIFIER, "Expected module path").value
-            
-            return ImportStatement(module_path=module_path, items=items)
-        else:
-            # Regular import
-            module_path = self.consume(TokenType.IDENTIFIER, "Expected module path").value
-            
-            alias = None
-            if self.match(TokenType.IDENTIFIER):  # 'as'
-                if self.previous().value == "as":
-                    alias = self.consume(TokenType.IDENTIFIER, "Expected alias").value
-                else:
-                    raise ParseError("Unexpected token in import", self.previous().location)
-            
-            return ImportStatement(module_path=module_path, alias=alias)
-    
-    # ========================================================================
-    # Statement Parsing
-    # ========================================================================
-    
-    def statement(self) -> Statement:
-        """Parse a statement."""
-        if self.match(TokenType.IF):
-            return self.if_statement()
-        if self.match(TokenType.WHILE):
-            return self.while_statement()
-        if self.match(TokenType.FOR):
-            return self.for_statement()
-        if self.match(TokenType.RETURN):
-            return self.return_statement()
-        if self.match(TokenType.BREAK):
-            return BreakStatement(location=self.previous().location)
-        if self.match(TokenType.CONTINUE):
-            return ContinueStatement(location=self.previous().location)
-        if self.match(TokenType.LBRACE):
-            return self.block_statement()
-        
-        return self.expression_statement()
-    
-    def if_statement(self) -> IfStatement:
+    def parse_if_statement(self) -> IfStatement:
         """Parse an if statement."""
-        condition = self.expression()
-        # Validate that we got a valid condition
-        if condition is None:
-            raise ParseError("Expected condition after 'if'", self.previous().location)
-            
-        then_branch = self.statement()
+        location = self.current_token().location
+        self.consume(TokenType.IF)
         
-        else_branch = None
+        condition = self.parse_expression()
+        
+        self.consume(TokenType.LBRACE)
+        self.skip_newlines()
+        
+        then_body = []
+        while not self.match(TokenType.RBRACE) and not self.check(TokenType.EOF):
+            stmt = self.parse_statement()
+            if stmt:
+                then_body.append(stmt)
+            self.skip_newlines()
+        
+        self.consume(TokenType.RBRACE)
+        
+        else_body = None
         if self.match(TokenType.ELSE):
-            else_branch = self.statement()
-        
-        return IfStatement(
-            condition=condition,
-            then_branch=then_branch,
-            else_branch=else_branch,
-            location=self.previous().location
-        )
-    
-    def while_statement(self) -> WhileStatement:
-        """Parse a while statement."""
-        condition = self.expression()
-        body = self.statement()
-        
-        return WhileStatement(
-            condition=condition,
-            body=body,
-            location=self.previous().location
-        )
-    
-    def for_statement(self) -> ForStatement:
-        """Parse a for statement."""
-        variable = self.consume(TokenType.IDENTIFIER, "Expected variable name").value
-        self.consume(TokenType.IN, "Expected 'in'")
-        iterable = self.expression()
-        body = self.statement()
-        
-        return ForStatement(
-            variable=variable,
-            iterable=iterable,
-            body=body,
-            location=self.previous().location
-        )
-    
-    def return_statement(self) -> ReturnStatement:
-        """Parse a return statement."""
-        value = None
-        if not self.check(TokenType.NEWLINE) and not self.check(TokenType.SEMICOLON):
-            value = self.expression()
-        
-        return ReturnStatement(
-            value=value,
-            location=self.previous().location
-        )
-    
-    def block_statement(self) -> Block:
-        """Parse a block statement."""
-        statements = []
-        
-        while not self.check(TokenType.RBRACE) and not self.is_at_end():
-            if self.match(TokenType.NEWLINE):
-                continue
+            self.advance()
             
-            stmt = self.declaration()
+            if self.match(TokenType.LBRACE):
+                self.consume(TokenType.LBRACE)
+                self.skip_newlines()
+                
+                else_body = []
+                while not self.match(TokenType.RBRACE) and not self.check(TokenType.EOF):
+                    stmt = self.parse_statement()
+                    if stmt:
+                        else_body.append(stmt)
+                    self.skip_newlines()
+                
+                self.consume(TokenType.RBRACE)
+            elif self.match(TokenType.IF):
+                # Handle "else if"
+                else_if = self.parse_if_statement()
+                else_body = [else_if]
+        
+        return IfStatement(condition, then_body, else_body, location)
+    
+    def parse_for_statement(self) -> ForStatement:
+        """Parse a for statement."""
+        location = self.current_token().location
+        self.consume(TokenType.FOR)
+        
+        variable = self.consume(TokenType.IDENTIFIER).value
+        
+        self.consume(TokenType.IN)
+        
+        iterable = self.parse_expression()
+        
+        self.consume(TokenType.LBRACE)
+        self.skip_newlines()
+        
+        body = []
+        while not self.match(TokenType.RBRACE) and not self.check(TokenType.EOF):
+            stmt = self.parse_statement()
+            if stmt:
+                body.append(stmt)
+            self.skip_newlines()
+        
+        self.consume(TokenType.RBRACE)
+        
+        return ForStatement(variable, iterable, body, location)
+    
+    def parse_return_statement(self) -> ReturnStatement:
+        """Parse a return statement."""
+        location = self.current_token().location
+        self.consume(TokenType.RETURN)
+        
+        value = None
+        if not self.match(TokenType.NEWLINE, TokenType.RBRACE, TokenType.EOF):
+            value = self.parse_expression()
+        
+        return ReturnStatement(value, location)
+    
+    def parse_block_statement(self) -> BlockStatement:
+        """Parse a block statement."""
+        location = self.current_token().location
+        self.consume(TokenType.LBRACE)
+        self.skip_newlines()
+        
+        statements = []
+        while not self.match(TokenType.RBRACE) and not self.check(TokenType.EOF):
+            stmt = self.parse_statement()
             if stmt:
                 statements.append(stmt)
+            self.skip_newlines()
         
-        self.consume(TokenType.RBRACE, "Expected '}' after block")
+        self.consume(TokenType.RBRACE)
         
-        return Block(statements=statements, location=self.previous().location)
+        return BlockStatement(statements, location)
     
-    def expression_statement(self) -> ExpressionStatement:
-        """Parse an expression statement."""
-        expr = self.expression()
-        return ExpressionStatement(expression=expr, location=expr.location)
+    # =========================================================================
+    # Expression parsing (precedence climbing)
+    # =========================================================================
     
-    # ========================================================================
-    # Expression Parsing (Precedence Climbing)
-    # ========================================================================
-    
-    def expression(self) -> Expression:
+    def parse_expression(self) -> Expression:
         """Parse an expression."""
-        return self.assignment()
+        return self.parse_or_expression()
     
-    def assignment(self) -> Expression:
-        """Parse assignment expression."""
-        expr = self.logical_or()
-        
-        if self.match(TokenType.ASSIGN, TokenType.PLUS_ASSIGN, 
-                      TokenType.MINUS_ASSIGN, TokenType.MULTIPLY_ASSIGN, 
-                      TokenType.DIVIDE_ASSIGN):
-            operator = self.previous().value
-            value = self.assignment()
-            
-            if operator != '=':
-                # Convert += to = + for AST simplicity
-                binary_op = operator[:-1]  # Remove '='
-                value = BinaryOp(expr, binary_op, value, location=expr.location)
-            
-            return Assignment(target=expr, value=value, location=expr.location)
-        
-        return expr
-    
-    def logical_or(self) -> Expression:
+    def parse_or_expression(self) -> Expression:
         """Parse logical OR expression."""
-        expr = self.logical_and()
+        expr = self.parse_and_expression()
         
         while self.match(TokenType.OR):
-            operator = self.previous().value
-            right = self.logical_and()
-            expr = BinaryOp(expr, operator, right, location=expr.location)
+            operator = self.advance().value
+            right = self.parse_and_expression()
+            expr = BinaryExpression(expr, operator, right, expr.location)
         
         return expr
     
-    def logical_and(self) -> Expression:
+    def parse_and_expression(self) -> Expression:
         """Parse logical AND expression."""
-        expr = self.equality()
+        expr = self.parse_equality_expression()
         
         while self.match(TokenType.AND):
-            operator = self.previous().value
-            right = self.equality()
-            expr = BinaryOp(expr, operator, right, location=expr.location)
+            operator = self.advance().value
+            right = self.parse_equality_expression()
+            expr = BinaryExpression(expr, operator, right, expr.location)
         
         return expr
     
-    def equality(self) -> Expression:
+    def parse_equality_expression(self) -> Expression:
         """Parse equality expression."""
-        expr = self.comparison()
+        expr = self.parse_comparison_expression()
         
         while self.match(TokenType.EQUAL, TokenType.NOT_EQUAL):
-            operator = self.previous().value
-            right = self.comparison()
-            expr = BinaryOp(expr, operator, right, location=expr.location)
+            operator = self.advance().value
+            right = self.parse_comparison_expression()
+            expr = BinaryExpression(expr, operator, right, expr.location)
         
         return expr
     
-    def comparison(self) -> Expression:
+    def parse_comparison_expression(self) -> Expression:
         """Parse comparison expression."""
-        expr = self.range()
+        expr = self.parse_term_expression()
         
-        while self.match(TokenType.GREATER, TokenType.GREATER_EQUAL,
-                          TokenType.LESS, TokenType.LESS_EQUAL):
-            operator = self.previous().value
-            right = self.range()
-            expr = BinaryOp(expr, operator, right, location=expr.location)
-        
-        return expr
-    
-    def range(self) -> Expression:
-        """Parse range expression."""
-        expr = self.term()
-        
-        if self.match(TokenType.RANGE):
-            end = self.term()
-            return RangeLiteral(expr, end, location=expr.location)
+        while self.match(TokenType.LESS_THAN, TokenType.LESS_EQUAL,
+                         TokenType.GREATER_THAN, TokenType.GREATER_EQUAL):
+            operator = self.advance().value
+            right = self.parse_term_expression()
+            expr = BinaryExpression(expr, operator, right, expr.location)
         
         return expr
     
-    def term(self) -> Expression:
+    def parse_term_expression(self) -> Expression:
         """Parse addition/subtraction expression."""
-        expr = self.factor()
+        expr = self.parse_factor_expression()
         
         while self.match(TokenType.PLUS, TokenType.MINUS):
-            operator = self.previous().value
-            right = self.factor()
-            expr = BinaryOp(expr, operator, right, location=expr.location)
+            operator = self.advance().value
+            right = self.parse_factor_expression()
+            expr = BinaryExpression(expr, operator, right, expr.location)
         
         return expr
     
-    def factor(self) -> Expression:
+    def parse_factor_expression(self) -> Expression:
         """Parse multiplication/division expression."""
-        expr = self.unary()
+        expr = self.parse_matrix_expression()
         
-        while self.match(TokenType.MULTIPLY, TokenType.DIVIDE, 
-                          TokenType.MODULO, TokenType.MATRIX_MUL):
-            operator = self.previous().value
-            right = self.unary()
-            expr = BinaryOp(expr, operator, right, location=expr.location)
+        while self.match(TokenType.MULTIPLY, TokenType.DIVIDE, TokenType.MODULO):
+            operator = self.advance().value
+            right = self.parse_matrix_expression()
+            expr = BinaryExpression(expr, operator, right, expr.location)
         
         return expr
     
-    def unary(self) -> Expression:
-        """Parse unary expression."""
-        if self.match(TokenType.NOT, TokenType.MINUS, TokenType.BIT_NOT):
-            operator = self.previous().value
-            right = self.unary()
-            return UnaryOp(operator, right, location=self.previous().location)
+    def parse_matrix_expression(self) -> Expression:
+        """Parse matrix multiplication expression."""
+        expr = self.parse_unary_expression()
         
-        return self.postfix()
+        while self.match(TokenType.MATRIX_MULT):
+            operator = self.advance().value
+            right = self.parse_unary_expression()
+            expr = BinaryExpression(expr, operator, right, expr.location)
+        
+        return expr
     
-    def postfix(self) -> Expression:
-        """Parse postfix expression (member access, indexing, calls)."""
-        expr = self.primary()
+    def parse_unary_expression(self) -> Expression:
+        """Parse unary expression."""
+        if self.match(TokenType.NOT, TokenType.MINUS):
+            operator = self.advance().value
+            operand = self.parse_unary_expression()
+            return UnaryExpression(operator, operand, operand.location)
+        
+        return self.parse_postfix_expression()
+    
+    def parse_postfix_expression(self) -> Expression:
+        """Parse postfix expression (calls, member access, indexing)."""
+        expr = self.parse_primary_expression()
         
         while True:
-            if self.match(TokenType.DOT):
-                name = self.consume(TokenType.IDENTIFIER, "Expected property name").value
-                expr = MemberAccess(expr, name, location=expr.location)
+            if self.match(TokenType.LESS_THAN):
+                # Ambiguity: could be a generic call `func<T>()` or a comparison `a < b`.
+                # We need to look ahead to resolve this.
+                checkpoint = self.current
+                
+                # Look for a matching `>` followed by a `(`.
+                is_generic_call = False
+                balance = 1
+                temp_pos = self.current + 1
+                while temp_pos < len(self.tokens):
+                    if self.tokens[temp_pos].type == TokenType.LESS_THAN:
+                        balance += 1
+                    elif self.tokens[temp_pos].type == TokenType.GREATER_THAN:
+                        balance -= 1
+                        if balance == 0:
+                            # Found matching '>', check for '('
+                            if temp_pos + 1 < len(self.tokens) and \
+                               self.tokens[temp_pos + 1].type == TokenType.LPAREN:
+                                is_generic_call = True
+                            break
+                    temp_pos += 1
+
+                if is_generic_call:
+                    try:
+                        self.advance() # Consume '<'
+                        
+                        type_args = []
+                        if not self.check(TokenType.GREATER_THAN):
+                            type_args.append(self.parse_type())
+                            while self.match(TokenType.COMMA):
+                                self.advance()
+                                type_args.append(self.parse_type())
+                        
+                        self.consume(TokenType.GREATER_THAN)
+                        self.consume(TokenType.LPAREN)
+                        
+                        arguments = []
+                        if not self.match(TokenType.RPAREN):
+                            arguments.append(self.parse_expression())
+                            while self.match(TokenType.COMMA):
+                                self.advance()
+                                arguments.append(self.parse_expression())
+                        
+                        self.consume(TokenType.RPAREN)
+                        expr = CallExpression(expr, arguments, type_args, expr.location)
+                        continue
+                    except NeuroSyntaxError:
+                        # Backtrack if parsing fails
+                        self.current = checkpoint
+                        # Fall through to treat as binary operator
+                
+            if self.match(TokenType.LPAREN):
+                # Function call
+                self.advance()
+                arguments = []
+                
+                if not self.match(TokenType.RPAREN):
+                    arguments.append(self.parse_expression())
+                    while self.match(TokenType.COMMA):
+                        self.advance()
+                        arguments.append(self.parse_expression())
+                
+                self.consume(TokenType.RPAREN)
+                expr = CallExpression(expr, arguments, None, expr.location)
+                
+            elif self.match(TokenType.DOT):
+                # Member access
+                self.advance()
+                member = self.consume(TokenType.IDENTIFIER).value
+                expr = MemberExpression(expr, member, expr.location)
+                
             elif self.match(TokenType.LBRACKET):
-                index = self.expression()
-                self.consume(TokenType.RBRACKET, "Expected ']' after index")
-                expr = IndexAccess(expr, index, location=expr.location)
-            elif self.match(TokenType.LPAREN):
-                expr = self.finish_call(expr)
+                # Array indexing
+                self.advance()
+                index = self.parse_expression()
+                self.consume(TokenType.RBRACKET)
+                expr = IndexExpression(expr, index, expr.location)
+                
             else:
                 break
         
         return expr
     
-    def primary(self) -> Expression:
+    def parse_primary_expression(self) -> Expression:
         """Parse primary expression."""
-        if self.match(TokenType.BOOLEAN):
-            value = self.previous().value == "true"
-            return Literal(value, location=self.previous().location)
+        location = self.current_token().location
         
+        # Literals
         if self.match(TokenType.INTEGER):
-            value = int(self.previous().value)
-            return Literal(value, location=self.previous().location)
+            value = int(self.advance().value)
+            return LiteralExpression(value, None, location)
         
         if self.match(TokenType.FLOAT):
-            value = float(self.previous().value)
-            return Literal(value, location=self.previous().location)
+            value = float(self.advance().value)
+            return LiteralExpression(value, None, location)
         
         if self.match(TokenType.STRING):
-            value = self.previous().value
-            return Literal(value, location=self.previous().location)
+            value = self.advance().value
+            return LiteralExpression(value, None, location)
         
+        if self.match(TokenType.TRUE, TokenType.FALSE):
+            value = self.advance().value == "true"
+            return LiteralExpression(value, None, location)
+        
+        # Neural network literal
+        if self.current_token().type == TokenType.IDENTIFIER and self.current_token().value == "NeuralNetwork":
+            return self.parse_neural_network_literal(location)
+        
+        # Identifier
         if self.match(TokenType.IDENTIFIER):
-            name = self.previous().value
-            location = self.previous().location
+            name = self.advance().value
             
-            # Check for struct initialization: TypeName { field: value, ... }
-            # Only parse as struct initializer if this looks like a type name (capitalized)
-            # and the next token after { is an identifier (for field name)
-            if self.check(TokenType.LBRACE) and self._looks_like_struct_initializer(name):
-                return self.struct_initializer(name, location)
+            # Check for struct literal
+            if self.match(TokenType.LBRACE):
+                return self.parse_struct_literal(name, location)
             
-            return Identifier(name, location=location)
+            return IdentifierExpression(name, location)
         
+        # Array literal
+        if self.match(TokenType.LBRACKET):
+            return self.parse_array_literal(location)
+        
+        # Parenthesized expression
         if self.match(TokenType.LPAREN):
-            expr = self.expression()
-            self.consume(TokenType.RPAREN, "Expected ')' after expression")
+            self.advance()
+            expr = self.parse_expression()
+            self.consume(TokenType.RPAREN)
             return expr
         
-        if self.match(TokenType.LBRACKET):
-            return self.tensor_literal()
-        
-        # Neural network model definitions
-        if self.match(TokenType.NEURALNETWORK):
-            # This handles `NeuralNetwork<...>{...}` initializer expressions
-            location = self.previous().location
-            
-            # Parse generics
-            generics = None
-            if self.match(TokenType.LESS):
-                generics = []
-                # Simplified generic parsing for this context
-                while not self.check(TokenType.GREATER) and not self.is_at_end():
-                    if self.match(TokenType.COMMA): continue
-                    generics.append(self.type_annotation())
-                self.consume(TokenType.GREATER, "Expected '>' after model generics")
-            
-            self.consume(TokenType.LBRACE, "Expected '{' for model initializer")
-            
-            layers = []
-            while not self.check(TokenType.RBRACE) and not self.is_at_end():
-                if self.match(TokenType.NEWLINE):
-                    continue
-
-                # This check handles trailing newlines or commas before the closing brace
-                if self.check(TokenType.RBRACE):
-                    break
-                
-                layers.append(self.expression())
-                
-                # Consume optional comma after a layer definition
-                self.match(TokenType.COMMA)
-
-            self.consume(TokenType.RBRACE, "Expected '}' after model layers")
-            
-            return ModelDefinition(name=None, layers=layers, generics=generics, location=location)
-        
-        raise ParseError(
-            f"Unexpected token: {self.peek().value}",
-            self.peek().location
+        # Error
+        self.error_reporter.syntax_error(
+            "Expected expression",
+            self.current_token().location
         )
+        self.advance()  # Skip the problematic token
+        return LiteralExpression(None, None, location)
     
-    # ========================================================================
-    # Helper Methods
-    # ========================================================================
-    
-    def finish_call(self, callee: Expression) -> FunctionCall:
-        """Parse function call arguments."""
-        arguments = []
+    def parse_array_literal(self, location: SourceLocation) -> ArrayExpression:
+        """Parse an array literal."""
+        self.consume(TokenType.LBRACKET)
         
-        if not self.check(TokenType.RPAREN):
-            while True:
-                # Check if this looks like a named argument (identifier = expression)
-                if self.check(TokenType.IDENTIFIER) and self.peek_ahead(1) and self.peek_ahead(1).type == TokenType.ASSIGN:
-                    name = self.advance().value
-                    self.consume(TokenType.ASSIGN, "Expected '=' after parameter name")
-                    value = self.expression()
-                    arguments.append(NamedArgument(name, value, location=self.previous().location))
-                else:
-                    # Parse regular positional arguments
-                    arguments.append(self.expression())
-                
-                if not self.match(TokenType.COMMA):
-                    break
-        
-        self.consume(TokenType.RPAREN, "Expected ')' after arguments")
-        return FunctionCall(callee, arguments, location=callee.location)
-    
-    def tensor_literal(self) -> TensorLiteral:
-        """Parse tensor literal: [1, 2, 3] or [[1, 2], [3, 4]]."""
         elements = []
-        
-        # Skip any newlines after opening bracket
-        while self.match(TokenType.NEWLINE):
-            pass
-        
-        if not self.check(TokenType.RBRACKET):
-            elements.append(self.expression())
+        if not self.match(TokenType.RBRACKET):
+            elements.append(self.parse_expression())
             while self.match(TokenType.COMMA):
-                # Skip any newlines after comma
-                while self.match(TokenType.NEWLINE):
-                    pass
-                    
-                # Allow trailing comma
-                if self.check(TokenType.RBRACKET):
+                self.advance()
+                if self.match(TokenType.RBRACKET):  # Trailing comma
                     break
-                    
-                elements.append(self.expression())
+                elements.append(self.parse_expression())
         
-        # Skip any newlines before closing bracket
-        while self.match(TokenType.NEWLINE):
-            pass
-        
-        self.consume(TokenType.RBRACKET, "Expected ']' after tensor elements")
-        return TensorLiteral(elements, location=self.previous().location)
+        self.consume(TokenType.RBRACKET)
+        return ArrayExpression(elements, location)
     
-    def struct_initializer(self, struct_name: str, location: SourceLocation) -> StructInitializer:
-        """Parse struct initializer: TypeName { field1: value1, field2: value2 }."""
-        self.consume(TokenType.LBRACE, "Expected '{' for struct initialization")
+    def parse_struct_literal(self, type_name: str, location: SourceLocation) -> StructExpression:
+        """Parse a struct literal."""
+        self.consume(TokenType.LBRACE)
         
-        fields = {}
-        
-        # Skip any newlines after opening brace
-        while self.match(TokenType.NEWLINE):
-            pass
-        
-        # Parse field initializers
-        if not self.check(TokenType.RBRACE):
-            # Parse first field
-            field_name = self.consume(TokenType.IDENTIFIER, "Expected field name").value
-            self.consume(TokenType.COLON, "Expected ':' after field name")
-            field_value = self.expression()
-            fields[field_name] = field_value
+        fields = []
+        if not self.match(TokenType.RBRACE):
+            # Parse field: value pairs
+            field_name = self.consume(TokenType.IDENTIFIER).value
+            self.consume(TokenType.COLON)
+            field_value = self.parse_expression()
+            fields.append((field_name, field_value))
             
-            # Parse remaining fields
             while self.match(TokenType.COMMA):
-                # Skip any newlines after comma
-                while self.match(TokenType.NEWLINE):
-                    pass
-                    
-                # Allow trailing comma
-                if self.check(TokenType.RBRACE):
+                self.advance()
+                if self.match(TokenType.RBRACE):  # Trailing comma
                     break
-                    
-                field_name = self.consume(TokenType.IDENTIFIER, "Expected field name").value
-                self.consume(TokenType.COLON, "Expected ':' after field name")
-                field_value = self.expression()
-                fields[field_name] = field_value
+                field_name = self.consume(TokenType.IDENTIFIER).value
+                self.consume(TokenType.COLON)
+                field_value = self.parse_expression()
+                fields.append((field_name, field_value))
         
-        # Skip any newlines before closing brace
-        while self.match(TokenType.NEWLINE):
-            pass
-        
-        self.consume(TokenType.RBRACE, "Expected '}' after struct fields")
-        
-        return StructInitializer(
-            struct_type=struct_name,
-            fields=fields,
-            location=location
-        )
+        self.consume(TokenType.RBRACE)
+        return StructExpression(type_name, fields, location)
     
-    def model_definition(self) -> ModelDefinition:
-        """Parse neural network model definition."""
-        self.advance()  # consume NEURALNETWORK
+    def parse_neural_network_literal(self, location: SourceLocation) -> NeuralNetworkExpression:
+        """Parse a neural network literal."""
+        self.consume(TokenType.IDENTIFIER)  # NeuralNetwork
         
-        # Parse generics
-        generics = None
-        if self.match(TokenType.LESS):
-            generics = []
-            generics.append(self.type_annotation())
-            while self.match(TokenType.COMMA):
-                generics.append(self.type_annotation())
-            self.consume(TokenType.GREATER, "Expected '>' after generics")
-
-        # The name is optional for anonymous initializers
-        name = None
-        if self.check(TokenType.IDENTIFIER) and self.peek_ahead(1).type == TokenType.LBRACE:
-            name = self.consume(TokenType.IDENTIFIER, "Expected model name or '{'").value
-
-        self.consume(TokenType.LBRACE, "Expected '{' after model name or generics")
+        # Parse type parameters
+        self.consume(TokenType.LESS_THAN)
+        element_type = self.parse_type()
+        self.consume(TokenType.COMMA)
+        
+        # Parse shape parameters
+        self.consume(TokenType.LPAREN)
+        shape_params = []
+        shape_params.append(int(self.consume(TokenType.INTEGER).value))
+        while self.match(TokenType.COMMA):
+            self.advance()
+            shape_params.append(int(self.consume(TokenType.INTEGER).value))
+        self.consume(TokenType.RPAREN)
+        self.consume(TokenType.GREATER_THAN)
         
         # Parse layers
+        self.consume(TokenType.LBRACE)
         layers = []
-        # Skip leading newlines
-        while self.match(TokenType.NEWLINE):
-            pass
-
-        if not self.check(TokenType.RBRACE):
-            layers.append(self.expression())
-            # Consume optional comma after the first layer
-            self.match(TokenType.COMMA)
-
-            while not self.check(TokenType.RBRACE) and not self.is_at_end():
-                # Skip any newlines between layers
-                while self.match(TokenType.NEWLINE):
-                    pass
-                
-                # Handle trailing comma case
-                if self.check(TokenType.RBRACE):
-                    break
-
-                layers.append(self.expression())
-                # Consume optional comma
-                self.match(TokenType.COMMA)
         
-        # Skip trailing newlines
-        while self.match(TokenType.NEWLINE):
-            pass
-
-        self.consume(TokenType.RBRACE, "Expected '}' after model layers")
-        
-        return ModelDefinition(
-            name=name,
-            layers=layers,
-            generics=generics,
-            location=self.previous().location
-        )
-    
-    def layer_definition(self) -> LayerDefinition:
-        """Parse neural network layer definition."""
-        layer_type = self.consume(TokenType.IDENTIFIER, "Expected layer type").value
-        self.consume(TokenType.LPAREN, "Expected '(' after layer type")
-        
-        # Parse layer parameters
-        parameters = {}
-        if not self.check(TokenType.RPAREN):
-            name = self.consume(TokenType.IDENTIFIER, "Expected parameter name").value
-            self.consume(TokenType.ASSIGN, "Expected '=' after parameter name")
-            value = self.expression()
-            parameters[name] = value
+        while not self.match(TokenType.RBRACE) and not self.check(TokenType.EOF):
+            layer = self.parse_expression()
+            layers.append(layer)
             
-            while self.match(TokenType.COMMA):
-                name = self.consume(TokenType.IDENTIFIER, "Expected parameter name").value
-                self.consume(TokenType.ASSIGN, "Expected '=' after parameter name")
-                value = self.expression()
-                parameters[name] = value
+            if self.match(TokenType.COMMA):
+                self.advance()
         
-        self.consume(TokenType.RPAREN, "Expected ')' after layer parameters")
+        self.consume(TokenType.RBRACE)
         
-        return LayerDefinition(
-            layer_type=layer_type,
-            parameters=parameters,
-            location=self.previous().location
-        )
+        return NeuralNetworkExpression(element_type, shape_params, layers, location)
     
-    def parameter(self) -> Parameter:
-        """Parse function parameter."""
-        # Allow keywords to be used as parameter names (soft keywords)
-        param_name_token: Optional[Token] = None
-        if self.check(TokenType.IDENTIFIER):
-            param_name_token = self.advance()
-            name = param_name_token.value
-        elif self.check(TokenType.MODEL):
-            # Allow 'model' keyword as parameter name
-            param_name_token = self.advance()
-            name = param_name_token.value
-        else:
-            # For any other keyword that might be used as a parameter name
-            current = self.peek()
-            if hasattr(current, 'value') and isinstance(current.value, str) and current.value.isalpha():
-                param_name_token = self.advance()
-                name = param_name_token.value
-            else:
-                raise ParseError("Expected parameter name", current.location)
-        
-        self.consume(TokenType.COLON, "Expected ':' after parameter name")
-        type_annotation = self.type_annotation()
-        # type_annotation() will raise ParseError if no valid type is found
-        
-        default_value = None
-        if self.match(TokenType.ASSIGN):
-            default_value = self.expression()
-        
-        param_location = param_name_token.location if param_name_token else self.previous().location
-        return Parameter(name, type_annotation, default_value, location=param_location)
+    # =========================================================================
+    # Type parsing
+    # =========================================================================
     
-    def struct_field(self) -> StructField:
-        """Parse struct field."""
-        name = self.consume(TokenType.IDENTIFIER, "Expected field name").value
-        self.consume(TokenType.COLON, "Expected ':' after field name")
-        type_annotation = self.type_annotation()
+    def parse_type(self) -> Type:
+        """Parse a type annotation."""
+        location = self.current_token().location
         
-        default_value = None
-        if self.match(TokenType.ASSIGN):
-            default_value = self.expression()
-        
-        return StructField(name, type_annotation, default_value)
-    
-    def type_annotation(self) -> Type:
-        """Parse type annotation."""
-        if self.match(TokenType.INT):
-            return PrimitiveType("int", location=self.previous().location)
-        if self.match(TokenType.FLOAT_TYPE):
-            return PrimitiveType("float", location=self.previous().location)
-        if self.match(TokenType.BOOL):
-            return PrimitiveType("bool", location=self.previous().location)
-        if self.match(TokenType.STRING_TYPE):
-            return PrimitiveType("string", location=self.previous().location)
+        if self.match(TokenType.INT_TYPE, TokenType.FLOAT_TYPE,
+                     TokenType.STRING_TYPE, TokenType.BOOL_TYPE):
+            name = self.advance().value
+            return PrimitiveType(name, location)
         
         if self.match(TokenType.TENSOR):
-            self.consume(TokenType.LESS, "Expected '<' after 'Tensor'")
-            element_type = self.type_annotation()
-            
-            shape = None
-            if self.match(TokenType.COMMA):
-                # Parse shape tuple
-                self.consume(TokenType.LPAREN, "Expected '(' for shape")
-                shape = []
-                shape.append(int(self.consume(TokenType.INTEGER, "Expected integer").value))
-                while self.match(TokenType.COMMA):
-                    # Allow trailing comma
-                    if self.check(TokenType.RPAREN):
-                        break
-                    shape.append(int(self.consume(TokenType.INTEGER, "Expected integer").value))
-                self.consume(TokenType.RPAREN, "Expected ')' after shape")
-            
-            self.consume(TokenType.GREATER, "Expected '>' after tensor type")
-            return TensorType(element_type, shape, location=self.previous().location)
-        
-        if self.match(TokenType.NEURALNETWORK):
-            self.consume(TokenType.LESS, "Expected '<' after 'NeuralNetwork'")
-            element_type = self.type_annotation()
-            
-            shape = None
-            if self.match(TokenType.COMMA):
-                # Parse shape tuple
-                self.consume(TokenType.LPAREN, "Expected '(' for shape")
-                shape = []
-                shape.append(int(self.consume(TokenType.INTEGER, "Expected integer").value))
-                while self.match(TokenType.COMMA):
-                    # Allow trailing comma
-                    if self.check(TokenType.RPAREN):
-                        break
-                    shape.append(int(self.consume(TokenType.INTEGER, "Expected integer").value))
-                self.consume(TokenType.RPAREN, "Expected ')' after shape")
-            
-            self.consume(TokenType.GREATER, "Expected '>' after neural network type")
-            # For now, treat NeuralNetwork similar to Tensor, but we could create a specific type
-            return TensorType(element_type, shape, location=self.previous().location)
+            return self.parse_tensor_type(location)
         
         if self.match(TokenType.IDENTIFIER):
-            name = self.previous().value
+            name = self.advance().value
             
-            # Check if this is a Tensor type specified as identifier
-            if name == "Tensor" and self.check(TokenType.LESS):
-                self.advance()  # consume '<'
-                element_type = self.type_annotation()
-                
-                shape = None
-                if self.match(TokenType.COMMA):
-                    # Parse shape tuple
-                    self.consume(TokenType.LPAREN, "Expected '(' for shape")
-                    shape = []
-                    shape.append(int(self.consume(TokenType.INTEGER, "Expected integer").value))
-                    while self.match(TokenType.COMMA):
-                        # Allow trailing comma
-                        if self.check(TokenType.RPAREN):
-                            break
-                        shape.append(int(self.consume(TokenType.INTEGER, "Expected integer").value))
-                    self.consume(TokenType.RPAREN, "Expected ')' after shape")
-                
-                self.consume(TokenType.GREATER, "Expected '>' after tensor type")
-                return TensorType(element_type, shape, location=self.previous().location)
-            
-            return GenericType(name, location=self.previous().location)
-        
-        # If we reach here, no valid type was found
-        raise ParseError(
-            f"Expected type annotation, found '{self.peek().value}'",
-            self.peek().location
-        )
-    
-    def generic_parameters(self) -> List[GenericType]:
-        """Parse generic type parameters."""
-        self.consume(TokenType.LESS, "Expected '<'")
-        
-        params = []
-        params.append(GenericType(self.consume(TokenType.IDENTIFIER, "Expected type parameter").value))
-        
-        while self.match(TokenType.COMMA):
-            params.append(GenericType(self.consume(TokenType.IDENTIFIER, "Expected type parameter").value))
-        
-        self.consume(TokenType.GREATER, "Expected '>' after type parameters")
-        return params
-    
-    # ========================================================================
-    # Utility Methods
-    # ========================================================================
-    
-    def match(self, *types: TokenType) -> bool:
-        """Check if current token matches any of the given types."""
-        for token_type in types:
-            if self.check(token_type):
+            # Check for generic type
+            if self.match(TokenType.LESS_THAN):
                 self.advance()
-                return True
-        return False
-    
-    def check(self, token_type: TokenType) -> bool:
-        """Check if current token is of given type."""
-        if self.is_at_end():
-            return False
-        return self.peek().type == token_type
-    
-    def advance(self) -> Token:
-        """Consume current token and return it."""
-        if not self.is_at_end():
-            self.current += 1
-        return self.previous()
-    
-    def is_at_end(self) -> bool:
-        """Check if we're at the end of tokens."""
-        return self.peek().type == TokenType.EOF
-    
-    def peek(self) -> Token:
-        """Return current token without advancing."""
-        return self.tokens[self.current]
-    
-    def peek_ahead(self, offset: int) -> Optional[Token]:
-        """Look ahead by offset tokens."""
-        index = self.current + offset
-        if index >= len(self.tokens):
-            return None
-        return self.tokens[index]
-    
-    def previous(self) -> Token:
-        """Return previous token."""
-        return self.tokens[self.current - 1]
-    
-    def consume(self, token_type: TokenType, message: str) -> Token:
-        """Consume token of expected type or raise error."""
-        if self.check(token_type):
-            return self.advance()
+                type_params = []
+                
+                type_params.append(self.parse_type())
+                while self.match(TokenType.COMMA):
+                    self.advance()
+                    type_params.append(self.parse_type())
+                
+                self.consume(TokenType.GREATER_THAN)
+                return GenericType(name, type_params, location)
+            
+            return PrimitiveType(name, location)
         
-        current_token = self.peek()
-        raise ParseError(
-            message,
-            current_token.location,
-            expected=token_type.name,
-            found=current_token.type.name
+        self.error_reporter.syntax_error(
+            "Expected type",
+            self.current_token().location
         )
+        return PrimitiveType("unknown", location)
     
-    def synchronize(self) -> None:
-        """Recover from parse errors by advancing to next statement."""
-        self.advance()
+    def parse_tensor_type(self, location: SourceLocation) -> TensorType:
+        """Parse a tensor type."""
+        self.consume(TokenType.TENSOR)
+        self.consume(TokenType.LESS_THAN)
         
-        while not self.is_at_end():
-            if self.previous().type == TokenType.NEWLINE:
-                return
-            
-            if self.peek().type in {
-                TokenType.FUNC, TokenType.STRUCT, TokenType.LET,
-                TokenType.IF, TokenType.WHILE, TokenType.FOR,
-                TokenType.RETURN
-            }:
-                return
-            
+        element_type = self.parse_type()
+        
+        shape = None
+        if self.match(TokenType.COMMA):
             self.advance()
+            self.consume(TokenType.LPAREN)
+            
+            shape = []
+            shape.append(int(self.consume(TokenType.INTEGER).value))
+            while self.match(TokenType.COMMA):
+                self.advance()
+                shape.append(int(self.consume(TokenType.INTEGER).value))
+            
+            self.consume(TokenType.RPAREN)
+        
+        self.consume(TokenType.GREATER_THAN)
+        
+        return TensorType(element_type, shape, location)
     
-    def is_simple_program(self) -> bool:
-        """Check if this appears to be a simple single-statement program (for better error reporting)."""
-        # If we have fewer than 10 tokens total, treat it as a simple program
-        return len(self.tokens) <= 10
-    
-    def _looks_like_struct_initializer(self, name: str) -> bool:
-        """Check if an identifier followed by { looks like a struct initializer."""
-        # Basic heuristic: type names are usually capitalized
-        if not name[0].isupper():
-            return False
-        
-        # Look ahead to see if there's an identifier after the opening brace
-        # Skip any newlines when looking ahead
-        offset = 1
-        while self.peek_ahead(offset) and self.peek_ahead(offset).type == TokenType.NEWLINE:
-            offset += 1
-        
-        # Check if there's an identifier after skipping newlines
-        if self.peek_ahead(offset) and self.peek_ahead(offset).type == TokenType.IDENTIFIER:
-            # Check if there's a colon after that identifier
-            if self.peek_ahead(offset + 1) and self.peek_ahead(offset + 1).type == TokenType.COLON:
-                return True
-        
-        # If the brace is immediately followed by } (possibly with newlines), it's probably a struct
-        if self.peek_ahead(offset) and self.peek_ahead(offset).type == TokenType.RBRACE:
-            return True
-        
-        return False 
+    def get_error_reporter(self) -> ErrorReporter:
+        """Get the error reporter."""
+        return self.error_reporter 

@@ -1,13 +1,10 @@
 """
-NEURO Abstract Syntax Tree (AST) Node Definitions
-
-Defines all AST node types for the NEURO programming language.
-These nodes represent the parsed structure of NEURO programs
-and are used by the type checker and code generator.
+Abstract Syntax Tree Node Definitions
+Defines all AST nodes for the NEURO programming language.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Optional, Union, Any, Dict
+from typing import List, Optional, Any, Union
 from dataclasses import dataclass
 from enum import Enum
 
@@ -19,31 +16,11 @@ class ASTNode(ABC):
     
     def __init__(self, location: Optional[SourceLocation] = None):
         self.location = location
-        # Create unique ID for hashing
-        self._id = id(self)
     
     @abstractmethod
-    def pretty_print(self, indent: int = 0) -> str:
-        """Return a pretty-printed representation of this node."""
+    def accept(self, visitor):
+        """Accept a visitor for the visitor pattern."""
         pass
-    
-    def _indent(self, level: int) -> str:
-        """Helper for indentation in pretty printing."""
-        return "  " * level
-    
-    def __hash__(self) -> int:
-        """Make AST nodes hashable using their unique ID."""
-        if not hasattr(self, '_id'):
-            self._id = id(self)
-        return hash(self._id)
-    
-    def __eq__(self, other) -> bool:
-        """AST nodes are equal if they are the same object."""
-        if not hasattr(self, '_id'):
-            self._id = id(self)
-        if not hasattr(other, '_id'):
-            other._id = id(other)
-        return isinstance(other, ASTNode) and self._id == other._id
 
 
 # ============================================================================
@@ -57,84 +34,76 @@ class Type(ASTNode):
 
 @dataclass
 class PrimitiveType(Type):
-    """Primitive types: int, float, bool, string."""
-    name: str  # 'int', 'float', 'bool', 'string'
+    """Primitive type (int, float, string, bool)."""
+    name: str
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_primitive_type(self)
+    
+    def __str__(self) -> str:
         return self.name
-    
-    def __hash__(self) -> int:
-        return hash(self.name)
-    
-    def __eq__(self, other) -> bool:
-        return isinstance(other, PrimitiveType) and self.name == other.name
-
-
-@dataclass
-class TensorType(Type):
-    """Tensor type with shape information."""
-    element_type: Type
-    shape: Optional[List[int]] = None  # None for dynamic shape
-    location: Optional[SourceLocation] = None
-    
-    def pretty_print(self, indent: int = 0) -> str:
-        if self.shape:
-            shape_str = f"({', '.join(map(str, self.shape))})"
-            return f"Tensor<{self.element_type.pretty_print()}, {shape_str}>"
-        return f"Tensor<{self.element_type.pretty_print()}>"
-    
-    def __hash__(self) -> int:
-        shape_tuple = tuple(self.shape) if self.shape else None
-        return hash((hash(self.element_type), shape_tuple))
-    
-    def __eq__(self, other) -> bool:
-        return (isinstance(other, TensorType) and 
-                self.element_type == other.element_type and 
-                self.shape == other.shape)
-
-
-@dataclass
-class FunctionType(Type):
-    """Function type with parameter and return types."""
-    param_types: List[Type]
-    return_type: Type
-    
-    def pretty_print(self, indent: int = 0) -> str:
-        params = ', '.join(t.pretty_print() for t in self.param_types)
-        return f"({params}) -> {self.return_type.pretty_print()}"
-    
-    def __hash__(self) -> int:
-        param_tuple = tuple(hash(pt) for pt in self.param_types)
-        return hash((param_tuple, hash(self.return_type)))
-    
-    def __eq__(self, other) -> bool:
-        return (isinstance(other, FunctionType) and 
-                self.param_types == other.param_types and 
-                self.return_type == other.return_type)
 
 
 @dataclass
 class GenericType(Type):
-    """Generic type parameter."""
+    """Generic type with type parameters."""
     name: str
-    constraints: List[Type] = None
+    type_params: List[Type]
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        if self.constraints:
-            constraints_str = ' + '.join(c.pretty_print() for c in self.constraints)
-            return f"{self.name}: {constraints_str}"
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_generic_type(self)
+    
+    def __str__(self) -> str:
+        if self.type_params:
+            params = ", ".join(str(p) for p in self.type_params)
+            return f"{self.name}<{params}>"
         return self.name
+
+
+@dataclass
+class TensorType(Type):
+    """Tensor type with element type and optional shape."""
+    element_type: Type
+    shape: Optional[List[int]] = None
+    location: Optional[SourceLocation] = None
     
-    def __hash__(self) -> int:
-        constraints_tuple = tuple(hash(c) for c in self.constraints) if self.constraints else None
-        return hash((self.name, constraints_tuple))
+    def __post_init__(self):
+        super().__init__(self.location)
     
-    def __eq__(self, other) -> bool:
-        return (isinstance(other, GenericType) and 
-                self.name == other.name and 
-                self.constraints == other.constraints)
+    def accept(self, visitor):
+        return visitor.visit_tensor_type(self)
+    
+    def __str__(self) -> str:
+        if self.shape:
+            shape_str = ", ".join(str(d) for d in self.shape)
+            return f"Tensor<{self.element_type}, ({shape_str})>"
+        return f"Tensor<{self.element_type}>"
+
+
+@dataclass
+class FunctionType(Type):
+    """Function type with parameter types and return type."""
+    param_types: List[Type]
+    return_type: Type
+    location: Optional[SourceLocation] = None
+    
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_function_type(self)
+    
+    def __str__(self) -> str:
+        params = ", ".join(str(p) for p in self.param_types)
+        return f"({params}) -> {self.return_type}"
 
 
 # ============================================================================
@@ -146,140 +115,165 @@ class Expression(ASTNode):
     pass
 
 
-@dataclass(unsafe_hash=True)
-class Literal(Expression):
-    """Literal values: numbers, strings, booleans."""
-    value: Union[int, float, str, bool]
+@dataclass
+class LiteralExpression(Expression):
+    """Literal expression (number, string, boolean)."""
+    value: Any
     type_hint: Optional[Type] = None
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_literal_expression(self)
+    
+    def __str__(self) -> str:
         if isinstance(self.value, str):
             return f'"{self.value}"'
         return str(self.value)
 
 
-@dataclass(unsafe_hash=True)
-class Identifier(Expression):
-    """Variable or function identifier."""
+@dataclass
+class IdentifierExpression(Expression):
+    """Identifier expression."""
     name: str
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_identifier_expression(self)
+    
+    def __str__(self) -> str:
         return self.name
 
 
-@dataclass(unsafe_hash=True)
-class BinaryOp(Expression):
-    """Binary operation: +, -, *, /, etc."""
+@dataclass
+class BinaryExpression(Expression):
+    """Binary expression."""
     left: Expression
     operator: str
     right: Expression
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        return f"({self.left.pretty_print()} {self.operator} {self.right.pretty_print()})"
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_binary_expression(self)
+    
+    def __str__(self) -> str:
+        return f"({self.left} {self.operator} {self.right})"
 
 
-@dataclass(unsafe_hash=True)
-class UnaryOp(Expression):
-    """Unary operation: -, !, ~."""
+@dataclass
+class UnaryExpression(Expression):
+    """Unary expression."""
     operator: str
     operand: Expression
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        return f"{self.operator}{self.operand.pretty_print()}"
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_unary_expression(self)
+    
+    def __str__(self) -> str:
+        return f"({self.operator}{self.operand})"
 
 
-@dataclass(eq=False)
-class FunctionCall(Expression):
+@dataclass
+class CallExpression(Expression):
     """Function call expression."""
     function: Expression
     arguments: List[Expression]
+    type_args: Optional[List[Type]] = None
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        args = ', '.join(arg.pretty_print() for arg in self.arguments)
-        return f"{self.function.pretty_print()}({args})"
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_call_expression(self)
+    
+    def __str__(self) -> str:
+        args = ", ".join(str(arg) for arg in self.arguments)
+        if self.type_args:
+            type_args = ", ".join(str(t) for t in self.type_args)
+            return f"{self.function}<{type_args}>({args})"
+        return f"{self.function}({args})"
 
 
-@dataclass(unsafe_hash=True)
-class MemberAccess(Expression):
-    """Member access: obj.member."""
+@dataclass
+class MemberExpression(Expression):
+    """Member access expression (obj.member)."""
     object: Expression
     member: str
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        return f"{self.object.pretty_print()}.{self.member}"
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_member_expression(self)
+    
+    def __str__(self) -> str:
+        return f"{self.object}.{self.member}"
 
 
-@dataclass(unsafe_hash=True)
-class IndexAccess(Expression):
-    """Array/tensor indexing: arr[index]."""
+@dataclass
+class IndexExpression(Expression):
+    """Index access expression (arr[index])."""
     object: Expression
     index: Expression
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        return f"{self.object.pretty_print()}[{self.index.pretty_print()}]"
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_index_expression(self)
+    
+    def __str__(self) -> str:
+        return f"{self.object}[{self.index}]"
 
 
-@dataclass(eq=False)
-class TensorLiteral(Expression):
-    """Tensor literal: [1, 2, 3] or [[1, 2], [3, 4]]."""
+@dataclass
+class ArrayExpression(Expression):
+    """Array literal expression."""
     elements: List[Expression]
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        elements_str = ', '.join(elem.pretty_print() for elem in self.elements)
-        return f"[{elements_str}]"
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_array_expression(self)
+    
+    def __str__(self) -> str:
+        elements = ", ".join(str(e) for e in self.elements)
+        return f"[{elements}]"
 
 
-@dataclass(unsafe_hash=True)
-class RangeLiteral(Expression):
-    """Range literal: 0..100."""
-    start: Expression
-    end: Expression
+@dataclass
+class StructExpression(Expression):
+    """Struct literal expression."""
+    type_name: str
+    fields: List[tuple[str, Expression]]
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        return f"{self.start.pretty_print()}..{self.end.pretty_print()}"
-
-
-@dataclass(unsafe_hash=True)
-class Assignment(Expression):
-    """Assignment expression: x = value."""
-    target: Expression
-    value: Expression
-    location: Optional[SourceLocation] = None
+    def __post_init__(self):
+        super().__init__(self.location)
     
-    def pretty_print(self, indent: int = 0) -> str:
-        return f"{self.target.pretty_print()} = {self.value.pretty_print()}"
-
-
-@dataclass(eq=False)
-class StructInitializer(Expression):
-    """Struct initialization: Type { field1: value1, field2: value2 }."""
-    struct_type: str  # Name of the struct type
-    fields: Dict[str, Expression]  # field_name -> value_expression
-    location: Optional[SourceLocation] = None
+    def accept(self, visitor):
+        return visitor.visit_struct_expression(self)
     
-    def pretty_print(self, indent: int = 0) -> str:
-        field_strs = [f"{name}: {expr.pretty_print()}" for name, expr in self.fields.items()]
-        return f"{self.struct_type} {{ {', '.join(field_strs)} }}"
-
-
-@dataclass(unsafe_hash=True)
-class NamedArgument(Expression):
-    """Named function argument: name=value."""
-    name: str
-    value: Expression
-    location: Optional[SourceLocation] = None
-    
-    def pretty_print(self, indent: int = 0) -> str:
-        return f"{self.name}={self.value.pretty_print()}"
+    def __str__(self) -> str:
+        fields = ", ".join(f"{name}: {expr}" for name, expr in self.fields)
+        return f"{self.type_name} {{ {fields} }}"
 
 
 # ============================================================================
@@ -291,318 +285,365 @@ class Statement(ASTNode):
     pass
 
 
-@dataclass(unsafe_hash=True)
+@dataclass
 class ExpressionStatement(Statement):
-    """Expression used as a statement."""
+    """Expression statement."""
     expression: Expression
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        return self._indent(indent) + self.expression.pretty_print()
-
-
-@dataclass(eq=False)
-class Block(Statement):
-    """Block of statements: { ... }."""
-    statements: List[Statement]
-    location: Optional[SourceLocation] = None
+    def __post_init__(self):
+        super().__init__(self.location)
     
-    def pretty_print(self, indent: int = 0) -> str:
-        lines = [self._indent(indent) + "{"]
-        for stmt in self.statements:
-            lines.append(stmt.pretty_print(indent + 1))
-        lines.append(self._indent(indent) + "}")
-        return '\n'.join(lines)
+    def accept(self, visitor):
+        return visitor.visit_expression_statement(self)
+    
+    def __str__(self) -> str:
+        return str(self.expression)
 
 
-@dataclass(unsafe_hash=True)
+@dataclass
 class VariableDeclaration(Statement):
-    """Variable declaration: let x: Type = value."""
+    """Variable declaration statement."""
     name: str
-    type_annotation: Optional[Type] = None
-    initializer: Optional[Expression] = None
-    is_mutable: bool = False
+    type_annotation: Optional[Type]
+    initializer: Optional[Expression]
+    is_mutable: bool = True
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        mut_str = "mut " if self.is_mutable else ""
-        type_str = f": {self.type_annotation.pretty_print()}" if self.type_annotation else ""
-        init_str = f" = {self.initializer.pretty_print()}" if self.initializer else ""
-        return f"{self._indent(indent)}let {mut_str}{self.name}{type_str}{init_str}"
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_variable_declaration(self)
+    
+    def __str__(self) -> str:
+        result = f"let {self.name}"
+        if self.type_annotation:
+            result += f": {self.type_annotation}"
+        if self.initializer:
+            result += f" = {self.initializer}"
+        return result
 
 
-@dataclass(unsafe_hash=True)
+@dataclass
+class AssignmentStatement(Statement):
+    """Assignment statement."""
+    target: Expression
+    value: Expression
+    location: Optional[SourceLocation] = None
+    
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_assignment_statement(self)
+    
+    def __str__(self) -> str:
+        return f"{self.target} = {self.value}"
+
+
+@dataclass
 class IfStatement(Statement):
-    """If statement with optional else clause."""
+    """If statement."""
     condition: Expression
-    then_branch: Statement
-    else_branch: Optional[Statement] = None
+    then_body: List[Statement]
+    else_body: Optional[List[Statement]] = None
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        lines = [f"{self._indent(indent)}if {self.condition.pretty_print()}"]
-        lines.append(self.then_branch.pretty_print(indent))
-        if self.else_branch:
-            lines.append(f"{self._indent(indent)}else")
-            lines.append(self.else_branch.pretty_print(indent))
-        return '\n'.join(lines)
-
-
-@dataclass(unsafe_hash=True)
-class WhileStatement(Statement):
-    """While loop statement."""
-    condition: Expression
-    body: Statement
-    location: Optional[SourceLocation] = None
+    def __post_init__(self):
+        super().__init__(self.location)
     
-    def pretty_print(self, indent: int = 0) -> str:
-        lines = [f"{self._indent(indent)}while {self.condition.pretty_print()}"]
-        lines.append(self.body.pretty_print(indent))
-        return '\n'.join(lines)
+    def accept(self, visitor):
+        return visitor.visit_if_statement(self)
+    
+    def __str__(self) -> str:
+        result = f"if {self.condition} {{ ... }}"
+        if self.else_body:
+            result += " else { ... }"
+        return result
 
 
-@dataclass(unsafe_hash=True)
+@dataclass
 class ForStatement(Statement):
     """For loop statement."""
     variable: str
     iterable: Expression
-    body: Statement
+    body: List[Statement]
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        lines = [f"{self._indent(indent)}for {self.variable} in {self.iterable.pretty_print()}"]
-        lines.append(self.body.pretty_print(indent))
-        return '\n'.join(lines)
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_for_statement(self)
+    
+    def __str__(self) -> str:
+        return f"for {self.variable} in {self.iterable} {{ ... }}"
 
 
-@dataclass(unsafe_hash=True)
+@dataclass
 class ReturnStatement(Statement):
-    """Return statement with optional value."""
-    value: Optional[Expression] = None
+    """Return statement."""
+    value: Optional[Expression]
     location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_return_statement(self)
+    
+    def __str__(self) -> str:
         if self.value:
-            return f"{self._indent(indent)}return {self.value.pretty_print()}"
-        return f"{self._indent(indent)}return"
-
-
-@dataclass(unsafe_hash=True)
-class BreakStatement(Statement):
-    """Break statement for loops."""
-    location: Optional[SourceLocation] = None
-    
-    def pretty_print(self, indent: int = 0) -> str:
-        return f"{self._indent(indent)}break"
-
-
-@dataclass(unsafe_hash=True)
-class ContinueStatement(Statement):
-    """Continue statement for loops."""
-    location: Optional[SourceLocation] = None
-    
-    def pretty_print(self, indent: int = 0) -> str:
-        return f"{self._indent(indent)}continue"
-
-
-# ============================================================================
-# Function and Struct Definitions
-# ============================================================================
-
-@dataclass
-class Parameter:
-    """Function parameter definition."""
-    name: str
-    type_annotation: Type
-    default_value: Optional[Expression] = None
-    location: Optional[SourceLocation] = None
-    
-    def pretty_print(self, indent: int = 0) -> str:
-        default_str = f" = {self.default_value.pretty_print()}" if self.default_value else ""
-        return f"{self.name}: {self.type_annotation.pretty_print()}{default_str}"
-
-
-@dataclass(eq=False)
-class FunctionDeclaration(Statement):
-    """Function declaration with body."""
-    name: str
-    parameters: List[Parameter]
-    return_type: Optional[Type]
-    body: Statement
-    generic_params: List[GenericType] = None
-    is_gpu: bool = False
-    location: Optional[SourceLocation] = None
-    
-    def pretty_print(self, indent: int = 0) -> str:
-        gpu_str = "@gpu " if self.is_gpu else ""
-        generic_str = ""
-        if self.generic_params:
-            generic_names = ', '.join(g.pretty_print() for g in self.generic_params)
-            generic_str = f"<{generic_names}>"
-        
-        params = ', '.join(p.pretty_print() for p in self.parameters)
-        return_str = f" -> {self.return_type.pretty_print()}" if self.return_type else ""
-        
-        lines = [f"{self._indent(indent)}{gpu_str}func {self.name}{generic_str}({params}){return_str}"]
-        lines.append(self.body.pretty_print(indent))
-        return '\n'.join(lines)
+            return f"return {self.value}"
+        return "return"
 
 
 @dataclass
-class StructField:
-    """Struct field definition."""
-    name: str
-    type_annotation: Type
-    default_value: Optional[Expression] = None
-    
-    def pretty_print(self, indent: int = 0) -> str:
-        default_str = f" = {self.default_value.pretty_print()}" if self.default_value else ""
-        return f"{self.name}: {self.type_annotation.pretty_print()}{default_str}"
-
-
-@dataclass(eq=False)
-class StructDeclaration(Statement):
-    """Struct declaration."""
-    name: str
-    fields: List[StructField]
-    generic_params: List[GenericType] = None
-    location: Optional[SourceLocation] = None
-    
-    def pretty_print(self, indent: int = 0) -> str:
-        generic_str = ""
-        if self.generic_params:
-            generic_names = ', '.join(g.pretty_print() for g in self.generic_params)
-            generic_str = f"<{generic_names}>"
-        
-        lines = [f"{self._indent(indent)}struct {self.name}{generic_str} {{"]
-        for field in self.fields:
-            lines.append(f"{self._indent(indent + 1)}{field.pretty_print()}")
-        lines.append(f"{self._indent(indent)}}}")
-        return '\n'.join(lines)
-
-
-# ============================================================================
-# Neural Network Specific AST Nodes
-# ============================================================================
-
-@dataclass(eq=False)
-class LayerDefinition(Expression):
-    """Neural network layer definition."""
-    layer_type: str  # 'dense', 'conv2d', 'lstm', etc.
-    parameters: Dict[str, Expression]
-    location: Optional[SourceLocation] = None
-    
-    def pretty_print(self, indent: int = 0) -> str:
-        params = ', '.join(f"{k}={v.pretty_print()}" for k, v in self.parameters.items())
-        return f"{self.layer_type}({params})"
-
-
-@dataclass(eq=False)
-class ModelDefinition(Expression):
-    """Neural network model definition."""
-    name: str
-    layers: List[LayerDefinition]
-    generics: Optional[List[Type]] = None
-    location: Optional[SourceLocation] = None
-    
-    def pretty_print(self, indent: int = 0) -> str:
-        generic_str = ""
-        if self.generics:
-            generic_types = ', '.join(g.pretty_print() for g in self.generics)
-            generic_str = f"<{generic_types}>"
-        
-        lines = [f"{self._indent(indent)}{self.name}{generic_str} {{"]
-        for layer in self.layers:
-            lines.append(f"{self._indent(indent + 1)}{layer.pretty_print()}")
-        lines.append(f"{self._indent(indent)}}}")
-        return '\n'.join(lines)
-
-
-# ============================================================================
-# Program Structure
-# ============================================================================
-
-@dataclass(eq=False)
-class ImportStatement(Statement):
-    """Import statement: import module."""
-    module_path: str
-    alias: Optional[str] = None
-    items: Optional[List[str]] = None  # For selective imports
-    
-    def pretty_print(self, indent: int = 0) -> str:
-        if self.items:
-            items_str = ', '.join(self.items)
-            return f"{self._indent(indent)}import {{{items_str}}} from {self.module_path}"
-        elif self.alias:
-            return f"{self._indent(indent)}import {self.module_path} as {self.alias}"
-        else:
-            return f"{self._indent(indent)}import {self.module_path}"
-
-
-@dataclass(eq=False)
-class Program(ASTNode):
-    """Root node representing a complete NEURO program."""
+class BlockStatement(Statement):
+    """Block statement."""
     statements: List[Statement]
+    location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        lines = []
-        for stmt in self.statements:
-            lines.append(stmt.pretty_print(indent))
-            lines.append("")  # Add blank line between top-level statements
-        return '\n'.join(lines).rstrip()
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_block_statement(self)
+    
+    def __str__(self) -> str:
+        return f"{{ {len(self.statements)} statements }}"
 
 
 # ============================================================================
-# Pattern Matching (Future Extension)
+# Declarations
 # ============================================================================
 
-@dataclass
-class Pattern(ASTNode):
-    """Base class for pattern matching patterns."""
+class Declaration(ASTNode):
+    """Base class for all declarations."""
     pass
 
 
 @dataclass
-class LiteralPattern(Pattern):
-    """Pattern that matches a literal value."""
-    value: Union[int, float, str, bool]
-    
-    def pretty_print(self, indent: int = 0) -> str:
-        return str(self.value)
-
-
-@dataclass
-class IdentifierPattern(Pattern):
-    """Pattern that binds to an identifier."""
+class Parameter:
+    """Function parameter."""
     name: str
+    type_annotation: Optional[Type]
+    default_value: Optional[Expression] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        return self.name
+    def __str__(self) -> str:
+        result = self.name
+        if self.type_annotation:
+            result += f": {self.type_annotation}"
+        if self.default_value:
+            result += f" = {self.default_value}"
+        return result
 
 
 @dataclass
-class MatchCase:
-    """A single case in a match expression."""
-    pattern: Pattern
-    guard: Optional[Expression] = None
-    body: Statement = None
+class FunctionDeclaration(Declaration):
+    """Function declaration."""
+    name: str
+    type_params: Optional[List[str]]
+    parameters: List[Parameter]
+    return_type: Optional[Type]
+    body: List[Statement]
+    is_generic: bool = False
+    location: Optional[SourceLocation] = None
     
-    def pretty_print(self, indent: int = 0) -> str:
-        guard_str = f" if {self.guard.pretty_print()}" if self.guard else ""
-        lines = [f"{self._indent(indent)}{self.pattern.pretty_print()}{guard_str} =>"]
-        lines.append(self.body.pretty_print(indent + 1))
-        return '\n'.join(lines)
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_function_declaration(self)
+    
+    def __str__(self) -> str:
+        result = f"func {self.name}"
+        if self.type_params:
+            type_params = ", ".join(self.type_params)
+            result += f"<{type_params}>"
+        params = ", ".join(str(p) for p in self.parameters)
+        result += f"({params})"
+        if self.return_type:
+            result += f" -> {self.return_type}"
+        return result + " { ... }"
 
 
-@dataclass(eq=False)
-class MatchExpression(Expression):
-    """Pattern matching expression."""
-    expression: Expression
-    cases: List[MatchCase]
+@dataclass
+class StructField:
+    """Struct field."""
+    name: str
+    type_annotation: Type
     
-    def pretty_print(self, indent: int = 0) -> str:
-        lines = [f"{self._indent(indent)}match {self.expression.pretty_print()} {{"]
-        for case in self.cases:
-            lines.append(case.pretty_print(indent + 1))
-        lines.append(f"{self._indent(indent)}}}")
-        return '\n'.join(lines) 
+    def __str__(self) -> str:
+        return f"{self.name}: {self.type_annotation}"
+
+
+@dataclass
+class StructDeclaration(Declaration):
+    """Struct declaration."""
+    name: str
+    type_params: Optional[List[str]]
+    fields: List[StructField]
+    is_generic: bool = False
+    location: Optional[SourceLocation] = None
+    
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_struct_declaration(self)
+    
+    def __str__(self) -> str:
+        result = f"struct {self.name}"
+        if self.type_params:
+            type_params = ", ".join(self.type_params)
+            result += f"<{type_params}>"
+        return result + " { ... }"
+
+
+# ============================================================================
+# Program
+# ============================================================================
+
+@dataclass
+class Program(ASTNode):
+    """Top-level program node."""
+    declarations: List[Declaration]
+    statements: List[Statement]
+    location: Optional[SourceLocation] = None
+    
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_program(self)
+    
+    def __str__(self) -> str:
+        decl_count = len(self.declarations)
+        stmt_count = len(self.statements)
+        return f"Program({decl_count} declarations, {stmt_count} statements)"
+
+
+# ============================================================================
+# Neural Network Specific
+# ============================================================================
+
+@dataclass
+class NeuralNetworkExpression(Expression):
+    """Neural network definition expression."""
+    element_type: Type
+    shape_params: List[int]
+    layers: List[Expression]
+    location: Optional[SourceLocation] = None
+    
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_neural_network_expression(self)
+    
+    def __str__(self) -> str:
+        shape = ", ".join(str(s) for s in self.shape_params)
+        return f"NeuralNetwork<{self.element_type}, ({shape})> {{ ... }}"
+
+
+@dataclass
+class LayerExpression(Expression):
+    """Neural network layer expression."""
+    layer_type: str
+    config: List[Expression]
+    location: Optional[SourceLocation] = None
+    
+    def __post_init__(self):
+        super().__init__(self.location)
+    
+    def accept(self, visitor):
+        return visitor.visit_layer_expression(self)
+    
+    def __str__(self) -> str:
+        config_str = ", ".join(str(c) for c in self.config)
+        return f"{self.layer_type}({config_str})"
+
+
+# ============================================================================
+# Visitor Pattern
+# ============================================================================
+
+class ASTVisitor(ABC):
+    """Abstract visitor for AST nodes."""
+    
+    @abstractmethod
+    def visit_program(self, node: Program): pass
+    
+    @abstractmethod
+    def visit_function_declaration(self, node: FunctionDeclaration): pass
+    
+    @abstractmethod
+    def visit_struct_declaration(self, node: StructDeclaration): pass
+    
+    @abstractmethod
+    def visit_variable_declaration(self, node: VariableDeclaration): pass
+    
+    @abstractmethod
+    def visit_assignment_statement(self, node: AssignmentStatement): pass
+    
+    @abstractmethod
+    def visit_expression_statement(self, node: ExpressionStatement): pass
+    
+    @abstractmethod
+    def visit_if_statement(self, node: IfStatement): pass
+    
+    @abstractmethod
+    def visit_for_statement(self, node: ForStatement): pass
+    
+    @abstractmethod
+    def visit_return_statement(self, node: ReturnStatement): pass
+    
+    @abstractmethod
+    def visit_block_statement(self, node: BlockStatement): pass
+    
+    @abstractmethod
+    def visit_literal_expression(self, node: LiteralExpression): pass
+    
+    @abstractmethod
+    def visit_identifier_expression(self, node: IdentifierExpression): pass
+    
+    @abstractmethod
+    def visit_binary_expression(self, node: BinaryExpression): pass
+    
+    @abstractmethod
+    def visit_unary_expression(self, node: UnaryExpression): pass
+    
+    @abstractmethod
+    def visit_call_expression(self, node: CallExpression): pass
+    
+    @abstractmethod
+    def visit_member_expression(self, node: MemberExpression): pass
+    
+    @abstractmethod
+    def visit_index_expression(self, node: IndexExpression): pass
+    
+    @abstractmethod
+    def visit_array_expression(self, node: ArrayExpression): pass
+    
+    @abstractmethod
+    def visit_struct_expression(self, node: StructExpression): pass
+    
+    @abstractmethod
+    def visit_primitive_type(self, node: PrimitiveType): pass
+    
+    @abstractmethod
+    def visit_generic_type(self, node: GenericType): pass
+    
+    @abstractmethod
+    def visit_tensor_type(self, node: TensorType): pass
+    
+    @abstractmethod
+    def visit_function_type(self, node: FunctionType): pass
+    
+    @abstractmethod
+    def visit_neural_network_expression(self, node: NeuralNetworkExpression): pass
+    
+    @abstractmethod
+    def visit_layer_expression(self, node: LayerExpression): pass 

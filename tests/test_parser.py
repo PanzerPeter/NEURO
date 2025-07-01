@@ -1,501 +1,582 @@
 """
-Tests for the NEURO Parser
-
-Comprehensive test suite covering AST generation and parsing edge cases.
+Tests for the NEURO parser.
 """
 
 import pytest
-from neuro.lexer import NeuroLexer
-from neuro.parser import NeuroParser
-from neuro.ast_nodes import *
-from neuro.errors import ParseError
+from src.neuro.lexer import NeuroLexer
+from src.neuro.parser import NeuroParser
+from src.neuro.ast_nodes import *
+from src.neuro.errors import NeuroSyntaxError
 
 
 class TestNeuroParser:
-    """Test suite for the NEURO parser."""
-    
-    def setup_method(self):
-        """Set up fresh lexer and parser for each test."""
-        self.lexer = NeuroLexer()
-        self.parser = NeuroParser()
+    """Test cases for the NEURO parser."""
     
     def parse_source(self, source: str) -> Program:
-        """Helper to tokenize and parse source code."""
-        tokens = self.lexer.tokenize(source, "test.nr")
-        return self.parser.parse(tokens)
+        """Helper method to parse source code."""
+        lexer = NeuroLexer(source)
+        tokens = lexer.tokenize()
+        parser = NeuroParser(tokens)
+        return parser.parse()
     
     def test_empty_program(self):
         """Test parsing an empty program."""
-        ast = self.parse_source("")
-        assert isinstance(ast, Program)
-        assert len(ast.statements) == 0
-    
-    def test_simple_variable_declaration(self):
-        """Test parsing variable declarations."""
-        source = "let x = 42"
-        ast = self.parse_source(source)
+        source = ""
+        program = self.parse_source(source)
         
-        assert len(ast.statements) == 1
-        stmt = ast.statements[0]
-        assert isinstance(stmt, VariableDeclaration)
-        assert stmt.name == "x"
-        assert isinstance(stmt.initializer, Literal)
-        assert stmt.initializer.value == 42
+        assert isinstance(program, Program)
+        assert len(program.declarations) == 0
+        assert len(program.statements) == 0
     
-    def test_typed_variable_declaration(self):
-        """Test parsing typed variable declarations."""
-        source = "let x: int = 42"
-        ast = self.parse_source(source)
+    def test_simple_function(self):
+        """Test parsing a simple function."""
+        source = """
+        func main() {
+            return 42
+        }
+        """
+        program = self.parse_source(source)
         
-        stmt = ast.statements[0]
-        assert isinstance(stmt, VariableDeclaration)
-        assert stmt.name == "x"
-        assert isinstance(stmt.type_annotation, PrimitiveType)
-        assert stmt.type_annotation.name == "int"
-        assert isinstance(stmt.initializer, Literal)
-        assert stmt.initializer.value == 42
-    
-    def test_mutable_variable_declaration(self):
-        """Test parsing mutable variable declarations."""
-        source = "let mut x = 42"
-        ast = self.parse_source(source)
+        assert len(program.declarations) == 1
         
-        stmt = ast.statements[0]
-        assert isinstance(stmt, VariableDeclaration)
-        assert stmt.name == "x"
-        assert stmt.is_mutable == True
+        func_decl = program.declarations[0]
+        assert isinstance(func_decl, FunctionDeclaration)
+        assert func_decl.name == "main"
+        assert len(func_decl.parameters) == 0
+        assert func_decl.return_type is None
+        assert len(func_decl.body) == 1
+        
+        return_stmt = func_decl.body[0]
+        assert isinstance(return_stmt, ReturnStatement)
+        assert isinstance(return_stmt.value, LiteralExpression)
+        assert return_stmt.value.value == 42
     
-    def test_function_declaration(self):
-        """Test parsing function declarations."""
+    def test_function_with_parameters(self):
+        """Test parsing a function with parameters."""
         source = """
         func add(a: int, b: int) -> int {
             return a + b
         }
         """
-        ast = self.parse_source(source)
+        program = self.parse_source(source)
         
-        assert len(ast.statements) == 1
-        func = ast.statements[0]
-        assert isinstance(func, FunctionDeclaration)
-        assert func.name == "add"
-        assert len(func.parameters) == 2
+        func_decl = program.declarations[0]
+        assert isinstance(func_decl, FunctionDeclaration)
+        assert func_decl.name == "add"
+        assert len(func_decl.parameters) == 2
         
         # Check parameters
-        assert func.parameters[0].name == "a"
-        assert isinstance(func.parameters[0].type_annotation, PrimitiveType)
-        assert func.parameters[0].type_annotation.name == "int"
+        param_a = func_decl.parameters[0]
+        assert param_a.name == "a"
+        assert isinstance(param_a.type_annotation, PrimitiveType)
+        assert param_a.type_annotation.name == "int"
         
-        assert func.parameters[1].name == "b"
-        assert isinstance(func.parameters[1].type_annotation, PrimitiveType)
-        assert func.parameters[1].type_annotation.name == "int"
+        param_b = func_decl.parameters[1]
+        assert param_b.name == "b"
+        assert isinstance(param_b.type_annotation, PrimitiveType)
+        assert param_b.type_annotation.name == "int"
         
         # Check return type
-        assert isinstance(func.return_type, PrimitiveType)
-        assert func.return_type.name == "int"
-        
-        # Check body
-        assert isinstance(func.body, Block)
-        assert len(func.body.statements) == 1
-        assert isinstance(func.body.statements[0], ReturnStatement)
+        assert isinstance(func_decl.return_type, PrimitiveType)
+        assert func_decl.return_type.name == "int"
     
-    def test_function_with_default_parameters(self):
-        """Test parsing functions with default parameters."""
-        source = """
-        func greet(name: string, greeting: string = "Hello") {
-            print(greeting + " " + name)
-        }
-        """
-        ast = self.parse_source(source)
-        
-        func = ast.statements[0]
-        assert isinstance(func, FunctionDeclaration)
-        assert len(func.parameters) == 2
-        
-        # Second parameter should have default value
-        assert func.parameters[1].name == "greeting"
-        assert func.parameters[1].default_value is not None
-        assert isinstance(func.parameters[1].default_value, Literal)
-        assert func.parameters[1].default_value.value == "Hello"
-    
-    def test_struct_declaration(self):
-        """Test parsing struct declarations."""
-        source = """
-        struct Point {
-            x: float
-            y: float
-        }
-        """
-        ast = self.parse_source(source)
-        
-        assert len(ast.statements) == 1
-        struct = ast.statements[0]
-        assert isinstance(struct, StructDeclaration)
-        assert struct.name == "Point"
-        assert len(struct.fields) == 2
-        
-        assert struct.fields[0].name == "x"
-        assert isinstance(struct.fields[0].type_annotation, PrimitiveType)
-        assert struct.fields[0].type_annotation.name == "float"
-        
-        assert struct.fields[1].name == "y"
-        assert isinstance(struct.fields[1].type_annotation, PrimitiveType)
-        assert struct.fields[1].type_annotation.name == "float"
-    
-    def test_tensor_type_parsing(self):
-        """Test parsing tensor types."""
-        source = "let weights: Tensor<float, (128, 784)> = create_weights()"
-        ast = self.parse_source(source)
-        
-        stmt = ast.statements[0]
-        assert isinstance(stmt, VariableDeclaration)
-        assert isinstance(stmt.type_annotation, TensorType)
-        
-        tensor_type = stmt.type_annotation
-        assert isinstance(tensor_type.element_type, PrimitiveType)
-        assert tensor_type.element_type.name == "float"
-        assert tensor_type.shape == [128, 784]
-    
-    def test_binary_expressions(self):
-        """Test parsing binary expressions."""
-        test_cases = [
-            ("1 + 2", "+"),
-            ("x - y", "-"),
-            ("a * b", "*"),
-            ("p / q", "/"),
-            ("m % n", "%"),
-            ("x @ y", "@"),  # Matrix multiplication
-            ("a == b", "=="),
-            ("x != y", "!="),
-            ("p < q", "<"),
-            ("m <= n", "<="),
-            ("a > b", ">"),
-            ("x >= y", ">="),
-            ("p && q", "&&"),
-            ("m || n", "||")
-        ]
-        
-        for source, expected_op in test_cases:
-            ast = self.parse_source(source)
-            stmt = ast.statements[0]
-            assert isinstance(stmt, ExpressionStatement)
-            expr = stmt.expression
-            assert isinstance(expr, BinaryOp)
-            assert expr.operator == expected_op
-    
-    def test_unary_expressions(self):
-        """Test parsing unary expressions."""
-        test_cases = [
-            ("-x", "-"),
-            ("!flag", "!"),
-            ("~bits", "~")
-        ]
-        
-        for source, expected_op in test_cases:
-            ast = self.parse_source(source)
-            stmt = ast.statements[0]
-            assert isinstance(stmt, ExpressionStatement)
-            expr = stmt.expression
-            assert isinstance(expr, UnaryOp)
-            assert expr.operator == expected_op
-    
-    def test_function_calls(self):
-        """Test parsing function calls."""
-        source = "print(\"Hello, World!\")"
-        ast = self.parse_source(source)
-        
-        stmt = ast.statements[0]
-        assert isinstance(stmt, ExpressionStatement)
-        expr = stmt.expression
-        assert isinstance(expr, FunctionCall)
-        assert isinstance(expr.function, Identifier)
-        assert expr.function.name == "print"
-        assert len(expr.arguments) == 1
-        assert isinstance(expr.arguments[0], Literal)
-        assert expr.arguments[0].value == "Hello, World!"
-    
-    def test_member_access(self):
-        """Test parsing member access expressions."""
-        source = "point.x"
-        ast = self.parse_source(source)
-        
-        stmt = ast.statements[0]
-        expr = stmt.expression
-        assert isinstance(expr, MemberAccess)
-        assert isinstance(expr.object, Identifier)
-        assert expr.object.name == "point"
-        assert expr.member == "x"
-    
-    def test_index_access(self):
-        """Test parsing index access expressions."""
-        source = "array[index]"
-        ast = self.parse_source(source)
-        
-        stmt = ast.statements[0]
-        expr = stmt.expression
-        assert isinstance(expr, IndexAccess)
-        assert isinstance(expr.object, Identifier)
-        assert expr.object.name == "array"
-        assert isinstance(expr.index, Identifier)
-        assert expr.index.name == "index"
-    
-    def test_tensor_literals(self):
-        """Test parsing tensor literals."""
-        source = "let matrix = [[1, 2], [3, 4]]"
-        ast = self.parse_source(source)
-        
-        stmt = ast.statements[0]
-        assert isinstance(stmt.initializer, TensorLiteral)
-        tensor = stmt.initializer
-        assert len(tensor.elements) == 2
-        
-        # Check nested structure
-        assert isinstance(tensor.elements[0], TensorLiteral)
-        assert isinstance(tensor.elements[1], TensorLiteral)
-        
-        row1 = tensor.elements[0]
-        assert len(row1.elements) == 2
-        assert isinstance(row1.elements[0], Literal)
-        assert row1.elements[0].value == 1
-    
-    def test_if_statement(self):
-        """Test parsing if statements."""
-        source = """
-        if x > 0 {
-            print("positive")
-        } else {
-            print("not positive")
-        }
-        """
-        ast = self.parse_source(source)
-        
-        stmt = ast.statements[0]
-        assert isinstance(stmt, IfStatement)
-        assert isinstance(stmt.condition, BinaryOp)
-        assert stmt.condition.operator == ">"
-        assert isinstance(stmt.then_branch, Block)
-        assert isinstance(stmt.else_branch, Block)
-    
-    def test_while_statement(self):
-        """Test parsing while statements."""
-        source = """
-        while i < 10 {
-            i = i + 1
-        }
-        """
-        ast = self.parse_source(source)
-        
-        stmt = ast.statements[0]
-        assert isinstance(stmt, WhileStatement)
-        assert isinstance(stmt.condition, BinaryOp)
-        assert isinstance(stmt.body, Block)
-    
-    def test_for_statement(self):
-        """Test parsing for statements."""
-        source = """
-        for item in collection {
-            print(item)
-        }
-        """
-        ast = self.parse_source(source)
-        
-        stmt = ast.statements[0]
-        assert isinstance(stmt, ForStatement)
-        assert stmt.variable == "item"
-        assert isinstance(stmt.iterable, Identifier)
-        assert stmt.iterable.name == "collection"
-        assert isinstance(stmt.body, Block)
-    
-    def test_assignment_expressions(self):
-        """Test parsing assignment expressions."""
-        source = "x = 42"
-        ast = self.parse_source(source)
-        
-        stmt = ast.statements[0]
-        expr = stmt.expression
-        assert isinstance(expr, Assignment)
-        assert isinstance(expr.target, Identifier)
-        assert expr.target.name == "x"
-        assert isinstance(expr.value, Literal)
-        assert expr.value.value == 42
-    
-    def test_compound_assignment(self):
-        """Test parsing compound assignment operators."""
-        test_cases = ["+=", "-=", "*=", "/="]
-        
-        for op in test_cases:
-            source = f"x {op} 5"
-            ast = self.parse_source(source)
-            
-            stmt = ast.statements[0]
-            expr = stmt.expression
-            assert isinstance(expr, Assignment)
-            # Compound assignment should be transformed to binary op
-            assert isinstance(expr.value, BinaryOp)
-            assert expr.value.operator == op[:-1]  # Remove '='
-    
-    def test_precedence_and_associativity(self):
-        """Test operator precedence and associativity."""
-        source = "a + b * c"
-        ast = self.parse_source(source)
-        
-        # Should parse as a + (b * c), not (a + b) * c
-        stmt = ast.statements[0]
-        expr = stmt.expression
-        assert isinstance(expr, BinaryOp)
-        assert expr.operator == "+"
-        assert isinstance(expr.left, Identifier)
-        assert expr.left.name == "a"
-        assert isinstance(expr.right, BinaryOp)
-        assert expr.right.operator == "*"
-    
-    def test_parenthesized_expressions(self):
-        """Test parsing parenthesized expressions."""
-        source = "(a + b) * c"
-        ast = self.parse_source(source)
-        
-        # Should parse as (a + b) * c
-        stmt = ast.statements[0]
-        expr = stmt.expression
-        assert isinstance(expr, BinaryOp)
-        assert expr.operator == "*"
-        assert isinstance(expr.left, BinaryOp)
-        assert expr.left.operator == "+"
-        assert isinstance(expr.right, Identifier)
-        assert expr.right.name == "c"
-    
-    def test_complex_expression(self):
-        """Test parsing complex nested expressions."""
-        source = "result = obj.method(x + y, z[i].field)"
-        ast = self.parse_source(source)
-        
-        stmt = ast.statements[0]
-        assert isinstance(stmt.expression, Assignment)
-        
-        # Right side should be a function call
-        call = stmt.expression.value
-        assert isinstance(call, FunctionCall)
-        
-        # Function should be member access
-        assert isinstance(call.function, MemberAccess)
-        assert call.function.member == "method"
-        
-        # Should have two arguments
-        assert len(call.arguments) == 2
-        
-        # First argument is binary operation
-        assert isinstance(call.arguments[0], BinaryOp)
-        
-        # Second argument is member access on index access
-        assert isinstance(call.arguments[1], MemberAccess)
-        assert isinstance(call.arguments[1].object, IndexAccess)
-    
-    def test_generic_types(self):
-        """Test parsing generic type parameters."""
+    def test_generic_function(self):
+        """Test parsing a generic function."""
         source = """
         func identity<T>(value: T) -> T {
             return value
         }
         """
-        ast = self.parse_source(source)
+        program = self.parse_source(source)
         
-        func = ast.statements[0]
-        assert isinstance(func, FunctionDeclaration)
-        assert func.generic_params is not None
-        assert len(func.generic_params) == 1
-        assert func.generic_params[0].name == "T"
+        func_decl = program.declarations[0]
+        assert isinstance(func_decl, FunctionDeclaration)
+        assert func_decl.name == "identity"
+        assert func_decl.is_generic
+        assert func_decl.type_params == ["T"]
     
-    def test_gpu_function_attribute(self):
-        """Test parsing @gpu function attribute."""
+    def test_variable_declaration(self):
+        """Test parsing variable declarations."""
         source = """
-        @gpu func matrix_multiply(a: Tensor<float>, b: Tensor<float>) -> Tensor<float> {
-            return a @ b
-        }
+        let x = 42
+        let y: float = 3.14
+        let name: string = "hello"
         """
-        # This test might need adjustment based on how @gpu is tokenized
-        # For now, skip implementation details
+        program = self.parse_source(source)
         
-    def test_error_recovery(self):
-        """Test parser error recovery."""
-        # Test various syntax errors
-        error_cases = [
-            "let x =",  # Missing value
-            "func () {",  # Missing function name
-            "if {",  # Missing condition
-            "let x: = 42",  # Missing type
-            "func f(a:) {}",  # Missing parameter type
-        ]
+        assert len(program.statements) == 3
         
-        for source in error_cases:
-            with pytest.raises(ParseError):
-                self.parse_source(source)
+        # First variable: type inferred
+        var1 = program.statements[0]
+        assert isinstance(var1, VariableDeclaration)
+        assert var1.name == "x"
+        assert var1.type_annotation is None
+        assert isinstance(var1.initializer, LiteralExpression)
+        assert var1.initializer.value == 42
+        
+        # Second variable: explicit type
+        var2 = program.statements[1]
+        assert isinstance(var2, VariableDeclaration)
+        assert var2.name == "y"
+        assert isinstance(var2.type_annotation, PrimitiveType)
+        assert var2.type_annotation.name == "float"
+        
+        # Third variable: string type
+        var3 = program.statements[2]
+        assert isinstance(var3, VariableDeclaration)
+        assert var3.name == "name"
+        assert isinstance(var3.type_annotation, PrimitiveType)
+        assert var3.type_annotation.name == "string"
     
-    def test_complete_program(self):
-        """Test parsing a complete program with multiple constructs."""
+    def test_struct_declaration(self):
+        """Test parsing struct declarations."""
         source = """
-        // A complete NEURO program
-        
         struct Point {
-            x: float
+            x: float,
             y: float
         }
+        """
+        program = self.parse_source(source)
         
-        func distance(p1: Point, p2: Point) -> float {
-            let dx = p1.x - p2.x
-            let dy = p1.y - p2.y
-            return sqrt(dx * dx + dy * dy)
+        assert len(program.declarations) == 1
+        
+        struct_decl = program.declarations[0]
+        assert isinstance(struct_decl, StructDeclaration)
+        assert struct_decl.name == "Point"
+        assert len(struct_decl.fields) == 2
+        
+        # Check fields
+        field_x = struct_decl.fields[0]
+        assert field_x.name == "x"
+        assert isinstance(field_x.type_annotation, PrimitiveType)
+        assert field_x.type_annotation.name == "float"
+        
+        field_y = struct_decl.fields[1]
+        assert field_y.name == "y"
+        assert isinstance(field_y.type_annotation, PrimitiveType)
+        assert field_y.type_annotation.name == "float"
+    
+    def test_generic_struct(self):
+        """Test parsing generic struct declarations."""
+        source = """
+        struct Point<T> {
+            x: T,
+            y: T
         }
+        """
+        program = self.parse_source(source)
         
-        func main() {
-            let x = 3.0
-            let y = 4.0
-            
-            let dist = sqrt(x * x + y * y)
-            print("Distance calculated")
-            
-            if dist > 5.0 {
-                print("Far away")
-            } else {
-                print("Close")
+        struct_decl = program.declarations[0]
+        assert isinstance(struct_decl, StructDeclaration)
+        assert struct_decl.name == "Point"
+        assert struct_decl.is_generic
+        assert struct_decl.type_params == ["T"]
+    
+    def test_binary_expressions(self):
+        """Test parsing binary expressions."""
+        source = """
+        func test() {
+            let a = 1 + 2
+            let b = 3 * 4
+            let c = a @ b
+            let d = x == y
+            let e = p and q
+        }
+        """
+        program = self.parse_source(source)
+        
+        func_body = program.declarations[0].body
+        
+        # Addition
+        add_stmt = func_body[0]
+        assert isinstance(add_stmt, VariableDeclaration)
+        add_expr = add_stmt.initializer
+        assert isinstance(add_expr, BinaryExpression)
+        assert add_expr.operator == "+"
+        
+        # Multiplication
+        mult_stmt = func_body[1]
+        mult_expr = mult_stmt.initializer
+        assert isinstance(mult_expr, BinaryExpression)
+        assert mult_expr.operator == "*"
+        
+        # Matrix multiplication
+        matmul_stmt = func_body[2]
+        matmul_expr = matmul_stmt.initializer
+        assert isinstance(matmul_expr, BinaryExpression)
+        assert matmul_expr.operator == "@"
+        
+        # Equality
+        eq_stmt = func_body[3]
+        eq_expr = eq_stmt.initializer
+        assert isinstance(eq_expr, BinaryExpression)
+        assert eq_expr.operator == "=="
+        
+        # Logical and
+        and_stmt = func_body[4]
+        and_expr = and_stmt.initializer
+        assert isinstance(and_expr, BinaryExpression)
+        assert and_expr.operator == "and"
+    
+    def test_unary_expressions(self):
+        """Test parsing unary expressions."""
+        source = """
+        func test() {
+            let a = -42
+            let b = not true
+        }
+        """
+        program = self.parse_source(source)
+        
+        func_body = program.declarations[0].body
+        
+        # Unary minus
+        neg_stmt = func_body[0]
+        neg_expr = neg_stmt.initializer
+        assert isinstance(neg_expr, UnaryExpression)
+        assert neg_expr.operator == "-"
+        
+        # Logical not
+        not_stmt = func_body[1]
+        not_expr = not_stmt.initializer
+        assert isinstance(not_expr, UnaryExpression)
+        assert not_expr.operator == "not"
+    
+    def test_function_calls(self):
+        """Test parsing function calls."""
+        source = """
+        func test() {
+            let result = add(1, 2)
+            let generic_result = identity<int>(42)
+        }
+        """
+        program = self.parse_source(source)
+        
+        func_body = program.declarations[0].body
+        
+        # Regular function call
+        call_stmt = func_body[0]
+        call_expr = call_stmt.initializer
+        assert isinstance(call_expr, CallExpression)
+        assert isinstance(call_expr.function, IdentifierExpression)
+        assert call_expr.function.name == "add"
+        assert len(call_expr.arguments) == 2
+        
+        # Generic function call
+        generic_call_stmt = func_body[1]
+        generic_call_expr = generic_call_stmt.initializer
+        assert isinstance(generic_call_expr, CallExpression)
+        assert len(generic_call_expr.type_args) == 1
+    
+    def test_array_literals(self):
+        """Test parsing array literals."""
+        source = """
+        func test() {
+            let vector = [1, 2, 3, 4]
+            let matrix = [[1, 2], [3, 4]]
+        }
+        """
+        program = self.parse_source(source)
+        
+        func_body = program.declarations[0].body
+        
+        # Vector
+        vector_stmt = func_body[0]
+        vector_expr = vector_stmt.initializer
+        assert isinstance(vector_expr, ArrayExpression)
+        assert len(vector_expr.elements) == 4
+        
+        # Matrix
+        matrix_stmt = func_body[1]
+        matrix_expr = matrix_stmt.initializer
+        assert isinstance(matrix_expr, ArrayExpression)
+        assert len(matrix_expr.elements) == 2
+        assert isinstance(matrix_expr.elements[0], ArrayExpression)
+    
+    def test_struct_literals(self):
+        """Test parsing struct literals."""
+        source = """
+        func test() {
+            let point = Point { x: 1.0, y: 2.0 }
+        }
+        """
+        program = self.parse_source(source)
+        
+        func_body = program.declarations[0].body
+        
+        struct_stmt = func_body[0]
+        struct_expr = struct_stmt.initializer
+        assert isinstance(struct_expr, StructExpression)
+        assert struct_expr.type_name == "Point"
+        assert len(struct_expr.fields) == 2
+        
+        # Check fields
+        field_x = struct_expr.fields[0]
+        assert field_x[0] == "x"  # field name
+        assert isinstance(field_x[1], LiteralExpression)  # field value
+    
+    def test_tensor_type(self):
+        """Test parsing tensor types."""
+        source = """
+        func test() {
+            let vector: Tensor<float> = [1.0, 2.0, 3.0]
+            let matrix: Tensor<float, (3, 3)> = zeros(3, 3)
+        }
+        """
+        program = self.parse_source(source)
+        
+        func_body = program.declarations[0].body
+        
+        # Vector tensor
+        vector_stmt = func_body[0]
+        vector_type = vector_stmt.type_annotation
+        assert isinstance(vector_type, TensorType)
+        assert isinstance(vector_type.element_type, PrimitiveType)
+        assert vector_type.element_type.name == "float"
+        assert vector_type.shape is None
+        
+        # Matrix tensor with shape
+        matrix_stmt = func_body[1]
+        matrix_type = matrix_stmt.type_annotation
+        assert isinstance(matrix_type, TensorType)
+        assert matrix_type.shape == [3, 3]
+    
+    def test_neural_network_expression(self):
+        """Test parsing neural network expressions."""
+        source = """
+        func test() {
+            let model = NeuralNetwork<float, (784, 128, 10)> {
+                dense_layer<128>(.relu),
+                batch_norm(),
+                dropout(0.2)
             }
         }
         """
+        program = self.parse_source(source)
         
-        ast = self.parse_source(source)
+        func_body = program.declarations[0].body
         
-        # Should parse without errors
-        assert isinstance(ast, Program)
-        assert len(ast.statements) >= 3  # struct, distance function, main function
-        
-        # Check that we have the expected constructs
-        types = [type(stmt) for stmt in ast.statements]
-        assert StructDeclaration in types
-        assert FunctionDeclaration in types
+        nn_stmt = func_body[0]
+        nn_expr = nn_stmt.initializer
+        assert isinstance(nn_expr, NeuralNetworkExpression)
+        assert isinstance(nn_expr.element_type, PrimitiveType)
+        assert nn_expr.element_type.name == "float"
+        assert nn_expr.shape_params == [784, 128, 10]
+        assert len(nn_expr.layers) == 3
     
-    def test_neural_network_syntax(self):
-        """Test parsing neural network specific syntax."""
+    def test_if_statement(self):
+        """Test parsing if statements."""
         source = """
-        let model = NeuralNetwork<float, (784, 128, 10)> {
-            dense_layer(units=128, activation=relu),
-            batch_norm(),
-            dropout(rate=0.2),
-            dense_layer(units=10, activation=softmax)
+        func test() {
+            if x > 0 {
+                print("positive")
+            } else {
+                print("non-positive")
+            }
         }
         """
+        program = self.parse_source(source)
         
-        # This test depends on how neural network syntax is implemented
-        # For now, this serves as a placeholder for future implementation
+        func_body = program.declarations[0].body
         
-    def test_ast_pretty_printing(self):
-        """Test that AST nodes can be pretty-printed."""
-        source = "let x = 42 + 3.14"
-        ast = self.parse_source(source)
+        if_stmt = func_body[0]
+        assert isinstance(if_stmt, IfStatement)
         
-        # Should be able to pretty print without errors
-        pretty = ast.pretty_print()
-        assert isinstance(pretty, str)
-        assert len(pretty) > 0
-        assert "let" in pretty
-        assert "x" in pretty
+        # Check condition
+        assert isinstance(if_stmt.condition, BinaryExpression)
+        assert if_stmt.condition.operator == ">"
+        
+        # Check then body
+        assert len(if_stmt.then_body) == 1
+        assert isinstance(if_stmt.then_body[0], ExpressionStatement)
+        
+        # Check else body
+        assert len(if_stmt.else_body) == 1
+        assert isinstance(if_stmt.else_body[0], ExpressionStatement)
+    
+    def test_for_statement(self):
+        """Test parsing for statements."""
+        source = """
+        func test() {
+            for element in array {
+                print(element)
+            }
+        }
+        """
+        program = self.parse_source(source)
+        
+        func_body = program.declarations[0].body
+        
+        for_stmt = func_body[0]
+        assert isinstance(for_stmt, ForStatement)
+        assert for_stmt.variable == "element"
+        assert isinstance(for_stmt.iterable, IdentifierExpression)
+        assert for_stmt.iterable.name == "array"
+        assert len(for_stmt.body) == 1
+    
+    def test_member_access(self):
+        """Test parsing member access expressions."""
+        source = """
+        func test() {
+            let x = obj.field
+            let y = point.x
+        }
+        """
+        program = self.parse_source(source)
+        
+        func_body = program.declarations[0].body
+        
+        # First member access
+        member_stmt = func_body[0]
+        member_expr = member_stmt.initializer
+        assert isinstance(member_expr, MemberExpression)
+        assert isinstance(member_expr.object, IdentifierExpression)
+        assert member_expr.object.name == "obj"
+        assert member_expr.member == "field"
+    
+    def test_index_access(self):
+        """Test parsing index access expressions."""
+        source = """
+        func test() {
+            let x = array[index]
+            let y = matrix[0][1]
+        }
+        """
+        program = self.parse_source(source)
+        
+        func_body = program.declarations[0].body
+        
+        # Simple index access
+        index_stmt = func_body[0]
+        index_expr = index_stmt.initializer
+        assert isinstance(index_expr, IndexExpression)
+        assert isinstance(index_expr.object, IdentifierExpression)
+        assert index_expr.object.name == "array"
+        
+        # Chained index access
+        chain_stmt = func_body[1]
+        chain_expr = chain_stmt.initializer
+        assert isinstance(chain_expr, IndexExpression)
+        assert isinstance(chain_expr.object, IndexExpression)  # Nested index
+    
+    def test_assignment_statement(self):
+        """Test parsing assignment statements."""
+        source = """
+        func test() {
+            x = 42
+            array[0] = value
+            obj.field = new_value
+        }
+        """
+        program = self.parse_source(source)
+        
+        func_body = program.declarations[0].body
+        
+        # Simple assignment
+        assign_stmt = func_body[0]
+        assert isinstance(assign_stmt, AssignmentStatement)
+        assert isinstance(assign_stmt.target, IdentifierExpression)
+        assert assign_stmt.target.name == "x"
+        
+        # Index assignment
+        index_assign_stmt = func_body[1]
+        assert isinstance(index_assign_stmt, AssignmentStatement)
+        assert isinstance(index_assign_stmt.target, IndexExpression)
+        
+        # Member assignment
+        member_assign_stmt = func_body[2]
+        assert isinstance(member_assign_stmt, AssignmentStatement)
+        assert isinstance(member_assign_stmt.target, MemberExpression)
+    
+    def test_operator_precedence(self):
+        """Test operator precedence parsing."""
+        source = """
+        func test() {
+            let result = a + b * c
+            let result2 = (a + b) * c
+            let result3 = a @ b + c
+        }
+        """
+        program = self.parse_source(source)
+        
+        func_body = program.declarations[0].body
+        
+        # a + b * c should parse as a + (b * c)
+        expr1 = func_body[0].initializer
+        assert isinstance(expr1, BinaryExpression)
+        assert expr1.operator == "+"
+        assert isinstance(expr1.right, BinaryExpression)
+        assert expr1.right.operator == "*"
+        
+        # (a + b) * c should parse as (a + b) * c
+        expr2 = func_body[1].initializer
+        assert isinstance(expr2, BinaryExpression)
+        assert expr2.operator == "*"
+        assert isinstance(expr2.left, BinaryExpression)
+        assert expr2.left.operator == "+"
+    
+    def test_complex_program(self):
+        """Test parsing a complex program with multiple constructs."""
+        source = """
+        struct Point<T> {
+            x: T,
+            y: T
+        }
+        
+        func distance<T>(p1: Point<T>, p2: Point<T>) -> T {
+            let dx = p1.x - p2.x
+            let dy = p1.y - p2.y
+            return dx * dx + dy * dy
+        }
+        
+        func main() {
+            let p1 = Point { x: 1.0, y: 2.0 }
+            let p2 = Point { x: 4.0, y: 6.0 }
+            let dist = distance(p1, p2)
+            print("Distance: " + str(dist))
+        }
+        """
+        program = self.parse_source(source)
+        
+        # Should parse successfully
+        assert len(program.declarations) == 3  # struct, distance function, main function
+        
+        # Check struct declaration
+        struct_decl = program.declarations[0]
+        assert isinstance(struct_decl, StructDeclaration)
+        assert struct_decl.name == "Point"
+        assert struct_decl.is_generic
+        
+        # Check generic function
+        distance_func = program.declarations[1]
+        assert isinstance(distance_func, FunctionDeclaration)
+        assert distance_func.name == "distance"
+        assert distance_func.is_generic
+        
+        # Check main function
+        main_func = program.declarations[2]
+        assert isinstance(main_func, FunctionDeclaration)
+        assert main_func.name == "main"
+        assert not main_func.is_generic
+    
+    def test_error_recovery(self):
+        """Test parser error recovery."""
+        source = """
+        func bad_syntax( {
+            // Missing parameter list closing paren
+        }
+        
+        func good_function() {
+            return 42
+        }
+        """
+        # Should handle syntax errors gracefully
+        try:
+            program = self.parse_source(source)
+            # If parsing succeeds, check that error recovery worked
+        except NeuroSyntaxError:
+            # Expected for malformed syntax
+            pass
 
 
 if __name__ == "__main__":

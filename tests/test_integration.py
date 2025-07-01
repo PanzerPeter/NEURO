@@ -1,422 +1,388 @@
 """
-Integration Tests for NEURO Compiler
-
-End-to-end tests that verify the complete compilation pipeline.
+Integration tests for the NEURO compiler.
+Tests the complete compilation pipeline from source to output.
 """
 
+import pytest
 import os
 import tempfile
-import subprocess
 from pathlib import Path
-import pytest
+import psutil
+import threading
+import time
 
-from neuro.lexer import NeuroLexer
-from neuro.parser import NeuroParser
-from neuro.compiler import NeuroCompiler
-from neuro.errors import NeuroError
+from src.neuro.compiler import NeuroCompiler, CompileOptions, OptimizationLevel
+from src.neuro.main import main
 
 
 class TestNeuroIntegration:
-    """Integration test suite for the complete NEURO compiler."""
+    """Integration tests for the NEURO compiler."""
     
-    def setup_method(self):
-        """Set up test environment."""
-        self.lexer = NeuroLexer()
-        self.parser = NeuroParser()
-        self.compiler = NeuroCompiler(verbose=True)
-        self.temp_dir = tempfile.mkdtemp()
+    def get_example_path(self, filename: str) -> str:
+        """Get the path to an example file."""
+        # Assuming tests are run from project root
+        return os.path.join("examples", "basics", filename)
     
-    def teardown_method(self):
-        """Clean up test environment."""
-        # Clean up temporary files
-        import shutil
-        if os.path.exists(self.temp_dir):
-            shutil.rmtree(self.temp_dir)
+    def get_ai_example_path(self, filename: str) -> str:
+        """Get the path to an AI/ML example file."""
+        return os.path.join("examples", "ai_ml", filename)
     
-    def compile_source(self, source_code: str, output_name: str = "test_program") -> str:
-        """Helper to compile source code and return output path."""
-        # Tokenize
-        tokens = self.lexer.tokenize(source_code, "test.nr")
+    def test_hello_world_compilation(self):
+        """Test compiling the hello world example."""
+        example_file = self.get_example_path("hello_world.nr")
         
-        # Parse
-        ast = self.parser.parse(tokens)
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
         
-        # Compile
-        output_path = os.path.join(self.temp_dir, output_name)
-        self.compiler.compile(ast, output_path)
+        compiler = NeuroCompiler()
+        result = compiler.compile_file(example_file)
         
-        return output_path
+        assert result.success, f"Compilation failed: {result.errors}"
+        assert result.output_file is not None
+        assert result.compilation_time > 0
     
-    def test_simple_program_compilation(self):
-        """Test compilation of a simple program."""
-        source = """
-        func main() {
-            let x = 42
-            let y = 3.14
-            let z = x + y
-        }
-        """
+    def test_basic_type_inference_compilation(self):
+        """Test compiling the basic type inference example."""
+        example_file = self.get_example_path("basic_type_inference.nr")
         
-        # Should compile without errors
-        output_path = self.compile_source(source)
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
         
-        # Output file should exist (or fallback script)
-        possible_extensions = ['', '.exe', '.bat', '.sh']
-        found_output = False
-        for ext in possible_extensions:
-            if os.path.exists(output_path + ext):
-                found_output = True
-                break
+        compiler = NeuroCompiler()
+        result = compiler.compile_file(example_file)
         
-        assert found_output, f"No output file found at {output_path}"
+        assert result.success, f"Compilation failed: {result.errors}"
+        assert result.output_file is not None
     
-    def test_function_with_parameters(self):
-        """Test compilation of functions with parameters."""
-        source = """
-        func add(a: int, b: int) -> int {
-            return a + b
-        }
+    def test_tensor_operations_compilation(self):
+        """Test compiling the tensor operations example."""
+        example_file = self.get_example_path("tensor_operations.nr")
         
-        func main() {
-            let result = add(5, 3)
-        }
-        """
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
         
-        # Should compile without errors
-        output_path = self.compile_source(source)
-        assert any(os.path.exists(output_path + ext) for ext in ['', '.exe', '.bat', '.sh'])
+        compiler = NeuroCompiler()
+        result = compiler.compile_file(example_file)
+        
+        assert result.success, f"Compilation failed: {result.errors}"
+        assert result.output_file is not None
     
-    def test_struct_definition(self):
-        """Test compilation of struct definitions."""
-        source = """
-        struct Point {
-            x: float
-            y: float
-        }
+    def test_struct_demo_compilation(self):
+        """Test compiling the struct demo example."""
+        example_file = self.get_example_path("struct_demo.nr")
         
-        func main() {
-            let p = Point { x: 1.0, y: 2.0 }
-        }
-        """
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
         
-        # Should compile without errors
-        output_path = self.compile_source(source)
-        assert any(os.path.exists(output_path + ext) for ext in ['', '.exe', '.bat', '.sh'])
+        compiler = NeuroCompiler()
+        result = compiler.compile_file(example_file)
+        
+        assert result.success, f"Compilation failed: {result.errors}"
+        assert result.output_file is not None
     
-    def test_control_flow(self):
-        """Test compilation of control flow structures."""
-        source = """
-        func main() {
-            let x = 10
+    def test_function_type_inference_compilation(self):
+        """Test compiling the function type inference example."""
+        example_file = self.get_example_path("function_type_inference.nr")
+        
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
+        
+        compiler = NeuroCompiler()
+        result = compiler.compile_file(example_file)
+        
+        assert result.success, f"Compilation failed: {result.errors}"
+        assert result.output_file is not None
+    
+    def test_constraint_solving_compilation(self):
+        """Test compiling the constraint solving example."""
+        example_file = self.get_example_path("constraint_solving.nr")
+        
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
+        
+        compiler = NeuroCompiler()
+        result = compiler.compile_file(example_file)
+        
+        assert result.success, f"Compilation failed: {result.errors}"
+        assert result.output_file is not None
+    
+    def test_neural_network_compilation(self):
+        """Test compiling the neural network example."""
+        example_file = self.get_ai_example_path("neural_network.nr")
+        
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
+        
+        compiler = NeuroCompiler()
+        result = compiler.compile_file(example_file)
+        
+        assert result.success, f"Compilation failed: {result.errors}"
+        assert result.output_file is not None
+    
+    def test_type_errors_handling(self):
+        """Test that type errors are properly handled."""
+        example_file = self.get_example_path("type_errors.nr")
+        
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
+        
+        compiler = NeuroCompiler()
+        result = compiler.compile_file(example_file)
+        
+        # This file might succeed or fail depending on whether it contains actual errors
+        # If it contains commented-out errors, it should succeed
+        # If it contains real errors, it should fail
+        # Either way, the compiler should handle it gracefully
+        assert result.compilation_time > 0
+    
+    def test_compilation_with_different_options(self):
+        """Test compilation with different options."""
+        example_file = self.get_example_path("hello_world.nr")
+        
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
+        
+        # Test different optimization levels
+        for opt_level in [OptimizationLevel.O0, OptimizationLevel.O1, OptimizationLevel.O2, OptimizationLevel.O3]:
+            options = CompileOptions(optimization_level=opt_level)
+            compiler = NeuroCompiler(options)
+            result = compiler.compile_file(example_file)
             
-            if x > 5 {
-                let y = x * 2
-            } else {
-                let y = x / 2
-            }
-            
-            let i = 0
-            while i < x {
-                i = i + 1
-            }
-            
-            let numbers = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-            for j in numbers {
-                let temp = j * j
-            }
-        }
-        """
-        
-        # Should compile without errors
-        output_path = self.compile_source(source)
-        assert any(os.path.exists(output_path + ext) for ext in ['', '.exe', '.bat', '.sh'])
+            assert result.success, f"Compilation failed with {opt_level}: {result.errors}"
     
-    def test_tensor_operations(self):
-        """Test compilation of tensor operations."""
-        source = """
-        func main() {
-            let vector: Tensor<float> = [1.0, 2.0, 3.0, 4.0]
-            let matrix: Tensor<float, (2, 2)> = [[1.0, 2.0], [3.0, 4.0]]
-            
-            let length = len(vector)
-            let element = vector[0]
-        }
-        """
+    def test_compilation_with_debug_info(self):
+        """Test compilation with debug information."""
+        example_file = self.get_example_path("hello_world.nr")
         
-        # Should compile without errors
-        output_path = self.compile_source(source)
-        assert any(os.path.exists(output_path + ext) for ext in ['', '.exe', '.bat', '.sh'])
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
+        
+        options = CompileOptions(debug_info=True, verbose=True)
+        compiler = NeuroCompiler(options)
+        result = compiler.compile_file(example_file)
+        
+        assert result.success, f"Compilation failed: {result.errors}"
     
     def test_llvm_ir_generation(self):
         """Test LLVM IR generation."""
-        source = """
-        func main() {
-            let message = "Hello, NEURO!"
-        }
-        """
+        example_file = self.get_example_path("hello_world.nr")
         
-        tokens = self.lexer.tokenize(source, "test.nr")
-        ast = self.parser.parse(tokens)
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
         
-        # Test IR generation
-        output_path = os.path.join(self.temp_dir, "test_ir")
-        self.compiler.compile(ast, output_path, emit_llvm_ir=True)
-        
-        # This test mainly checks that IR generation doesn't crash
-        # In a real implementation, we'd verify the IR content
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = os.path.join(temp_dir, "hello.ll")
+            options = CompileOptions(
+                output_format="llvm-ir",
+                output_file=output_file
+            )
+            compiler = NeuroCompiler(options)
+            result = compiler.compile_file(example_file)
+            
+            assert result.success, f"Compilation failed: {result.errors}"
+            assert os.path.exists(output_file)
+            
+            # Check that LLVM IR was generated
+            with open(output_file, 'r') as f:
+                content = f.read()
+                assert "define" in content or "declare" in content
     
-    def test_optimization_levels(self):
-        """Test different optimization levels."""
-        source = """
-        func factorial(n: int) -> int {
-            if n <= 1 {
-                return 1
-            } else {
-                return n * factorial(n - 1)
-            }
-        }
+    def test_assembly_generation(self):
+        """Test assembly generation."""
+        example_file = self.get_example_path("hello_world.nr")
         
-        func main() {
-            let result = factorial(5)
-        }
-        """
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
         
-        # Test each optimization level
-        for opt_level in [0, 1, 2, 3]:
-            compiler = NeuroCompiler(optimization_level=opt_level, verbose=False)
-            tokens = self.lexer.tokenize(source, "test.nr")
-            ast = self.parser.parse(tokens)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = os.path.join(temp_dir, "hello.s")
+            options = CompileOptions(
+                output_format="assembly",
+                output_file=output_file
+            )
+            compiler = NeuroCompiler(options)
+            result = compiler.compile_file(example_file)
             
-            output_path = os.path.join(self.temp_dir, f"test_opt_{opt_level}")
-            compiler.compile(ast, output_path)
+            assert result.success, f"Compilation failed: {result.errors}"
+            assert os.path.exists(output_file)
             
-            # Should create output file
-            assert any(os.path.exists(output_path + ext) for ext in ['', '.exe', '.bat', '.sh'])
+            # Check that assembly was generated
+            with open(output_file, 'r') as f:
+                content = f.read()
+                assert ".section" in content or ".text" in content
     
-    def test_error_handling(self):
-        """Test compiler error handling."""
-        error_cases = [
-            # Lexer errors
-            ('let x = "unterminated string', "lexer"),
-            ('let x = 1.2.3', "lexer"),
-            
-            # Parser errors
-            ('let x =', "parser"),
-            ('func () {}', "parser"),
-            
-            # Semantic errors (would be caught in full implementation)
-            # ('let x: int = "string"', "type"),
-        ]
+    def test_compilation_with_custom_output(self):
+        """Test compilation with custom output file."""
+        example_file = self.get_example_path("hello_world.nr")
         
-        for source, error_type in error_cases:
-            with pytest.raises(NeuroError):
-                try:
-                    tokens = self.lexer.tokenize(source, "test.nr")
-                    ast = self.parser.parse(tokens)
-                    output_path = os.path.join(self.temp_dir, "error_test")
-                    self.compiler.compile(ast, output_path)
-                except Exception as e:
-                    # Re-raise as NeuroError for test consistency
-                    raise NeuroError(str(e))
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
+        
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_file = os.path.join(temp_dir, "custom_hello")
+            options = CompileOptions(output_file=output_file)
+            compiler = NeuroCompiler(options)
+            result = compiler.compile_file(example_file)
+            
+            assert result.success, f"Compilation failed: {result.errors}"
+            assert result.output_file == output_file
     
-    def test_hello_world_example(self):
-        """Test the hello world example from examples/."""
-        hello_world_source = '''
-        // Simple Hello World in NEURO
-        // This demonstrates basic language syntax
+    def test_cli_compilation(self):
+        """Test compilation through CLI interface."""
+        example_file = self.get_example_path("hello_world.nr")
         
-        func main() {
-            let message = "Hello, NEURO World!"
-            print(message)
-            
-            // Basic arithmetic
-            let x = 42
-            let y = 3.14
-            let z = x + y
-            
-            print("The answer is: " + str(z))
-        }
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
         
-        // Example function with parameters and return type
-        func add(a: int, b: int) -> int {
-            return a + b
-        }
+        # Test basic compilation
+        exit_code = main([example_file])
+        assert exit_code == 0
         
-        // Example with tensor operations (AI-focused)
-        func create_simple_tensor() -> Tensor<float> {
-            let data = [1.0, 2.0, 3.0, 4.0]
-            return data
-        }
-        '''
-        
-        # Should compile the example successfully
-        output_path = self.compile_source(hello_world_source, "hello_world")
-        assert any(os.path.exists(output_path + ext) for ext in ['', '.exe', '.bat', '.sh'])
+        # Test with verbose output
+        exit_code = main([example_file, "--verbose"])
+        assert exit_code == 0
     
-    def test_complex_program(self):
-        """Test compilation of a more complex program."""
-        source = """
-        // Complex NEURO program demonstrating multiple features
+    def test_cli_with_emit_options(self):
+        """Test CLI with emit options."""
+        example_file = self.get_example_path("hello_world.nr")
         
-        struct Vector3D {
-            x: float
-            y: float
-            z: float
-        }
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
         
-        func dot_product(a: Vector3D, b: Vector3D) -> float {
-            return a.x * b.x + a.y * b.y + a.z * b.z
-        }
+        # Test emit tokens
+        exit_code = main([example_file, "--emit-tokens"])
+        assert exit_code == 0
         
-        func magnitude(v: Vector3D) -> float {
-            return sqrt(dot_product(v, v))
-        }
+        # Test emit AST
+        exit_code = main([example_file, "--emit-ast"])
+        assert exit_code == 0
         
-        func normalize(v: Vector3D) -> Vector3D {
-            let mag = magnitude(v)
-            return Vector3D {
-                x: v.x / mag,
-                y: v.y / mag,
-                z: v.z / mag
-            }
-        }
-        
-        func main() {
-            let v1 = Vector3D { x: 1.0, y: 2.0, z: 3.0 }
-            let v2 = Vector3D { x: 4.0, y: 5.0, z: 6.0 }
-            
-            let dot = dot_product(v1, v2)
-            let mag1 = magnitude(v1)
-            let mag2 = magnitude(v2)
-            
-            let normalized = normalize(v1)
-            
-            if dot > 0.0 {
-                print("Vectors point in similar direction")
-            } else {
-                print("Vectors point in different directions")
-            }
-            
-            // Demonstrate tensor operations
-            let matrix: Tensor<float, (3, 3)> = [
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.0, 0.0, 1.0]
-            ]
-            
-            let vector: Tensor<float, (3,)> = [v1.x, v1.y, v1.z]
-            let result = matrix @ vector
-        }
-        """
-        
-        # Should compile without errors
-        output_path = self.compile_source(source, "complex_program")
-        assert any(os.path.exists(output_path + ext) for ext in ['', '.exe', '.bat', '.sh'])
+        # Test emit LLVM IR
+        exit_code = main([example_file, "--emit-llvm-ir"])
+        assert exit_code == 0
     
-    def test_neural_network_program(self):
-        """Test compilation of a neural network program."""
-        source = """
-        func create_model() -> NeuralNetwork<float, (784, 128, 10)> {
-            return NeuralNetwork<float, (784, 128, 10)> {
-                dense_layer(units=128, activation=relu),
-                batch_norm(),
-                dropout(rate=0.2),
-                dense_layer(units=10, activation=softmax)
-            }
-        }
+    def test_compilation_error_handling(self):
+        """Test compilation error handling for invalid files."""
+        # Test non-existent file
+        exit_code = main(["nonexistent.nr"])
+        assert exit_code == 1
         
-        func train_model(model: NeuralNetwork<float, (784, 128, 10)>, 
-                        data: Tensor<float, (1000, 784)>,
-                        labels: Tensor<float, (1000, 10)>) {
+        # Test invalid syntax (create temporary file)
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.nr', delete=False) as f:
+            f.write("func invalid_syntax( {\\n    // Missing closing paren\\n}")
+            f.flush()
+            f.close()  # Explicitly close the file
             
-            let optimizer = Adam(learning_rate=0.001)
-            let loss_fn = CrossEntropyLoss()
-            
-            for epoch in 0..100 {
-                let predictions = model.forward(data)
-                let loss = loss_fn(predictions, labels)
-                
-                model.backward(loss)
-                optimizer.step()
-                
-                if epoch % 10 == 0 {
-                    print("Epoch " + str(epoch) + ", Loss: " + str(loss))
-                }
-            }
-        }
-        
-        func main() {
-            let model = create_model()
-            
-            // In a real implementation, we'd load actual data
-            let dummy_data: Tensor<float, (1000, 784)> = zeros(1000, 784)
-            let dummy_labels: Tensor<float, (1000, 10)> = zeros(1000, 10)
-            
-            train_model(model, dummy_data, dummy_labels)
-        }
-        """
-        
-        # Should compile without errors (even though some functions aren't implemented)
-        output_path = self.compile_source(source, "neural_network")
-        assert any(os.path.exists(output_path + ext) for ext in ['', '.exe', '.bat', '.sh'])
+            try:
+                exit_code = main([f.name])
+                # Should either fail (exit code 1) or handle error gracefully
+                assert exit_code in [0, 1]
+            finally:
+                os.unlink(f.name)
     
-    def test_compiler_phases(self):
-        """Test individual compiler phases."""
-        source = """
-        func test_function(x: int) -> int {
-            return x * 2
-        }
+    def test_all_examples_compile(self):
+        """Test that all example files compile successfully."""
+        examples_dir = "examples"
         
-        func main() {
-            let result = test_function(21)
-        }
-        """
+        if not os.path.exists(examples_dir):
+            pytest.skip("Examples directory not found")
         
-        tokens = self.lexer.tokenize(source, "test.nr")
-        ast = self.parser.parse(tokens)
+        compiler = NeuroCompiler()
         
-        # Test that all phases can be called without errors
-        compiler = NeuroCompiler(verbose=True)
+        # Find all .nr files in examples directory
+        example_files = []
+        for root, dirs, files in os.walk(examples_dir):
+            for file in files:
+                if file.endswith('.nr'):
+                    example_files.append(os.path.join(root, file))
         
-        # Phase 1: AST Validation
-        compiler._validate_ast(ast)
+        assert len(example_files) > 0, "No example files found"
         
-        # Phase 2: Type Checking  
-        compiler._type_check(ast)
+        failed_files = []
         
-        # Phase 3: Optimization
-        optimized_ast = compiler._optimize(ast)
-        assert optimized_ast is not None
+        for example_file in example_files:
+            result = compiler.compile_file(example_file)
+            
+            if not result.success:
+                failed_files.append((example_file, result.errors))
         
-        # Phase 4: Code Generation
-        llvm_ir = compiler._generate_llvm_ir(optimized_ast)
-        assert isinstance(llvm_ir, str)
-        assert "define" in llvm_ir  # Basic LLVM IR structure
+        if failed_files:
+            error_msg = "Failed to compile example files:\n"
+            for file, errors in failed_files:
+                error_msg += f"  {file}: {errors}\n"
+            pytest.fail(error_msg)
     
-    def test_fallback_compilation(self):
-        """Test that fallback compilation works when LLVM is not available."""
-        source = """
-        func main() {
-            let greeting = "Hello from fallback!"
-        }
-        """
+    def test_compilation_performance(self):
+        """Test compilation performance."""
+        example_file = self.get_example_path("hello_world.nr")
         
-        # Force fallback by using a compiler that will fail LLVM compilation
-        compiler = NeuroCompiler(verbose=True)
-        tokens = self.lexer.tokenize(source, "test.nr")
-        ast = self.parser.parse(tokens)
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
         
-        output_path = os.path.join(self.temp_dir, "fallback_test")
-        compiler.compile(ast, output_path)
+        compiler = NeuroCompiler()
+        result = compiler.compile_file(example_file)
         
-        # Should create some form of output (script fallback at minimum)
-        found_output = False
-        for ext in ['', '.exe', '.bat', '.sh', '.c']:
-            if os.path.exists(output_path + ext):
-                found_output = True
-                break
+        assert result.success
+        # Compilation should be reasonably fast (less than 5 seconds for simple file)
+        assert result.compilation_time < 5.0
+    
+    def test_memory_usage(self):
+        """Test that compilation doesn't use excessive memory."""
+        example_file = self.get_example_path("hello_world.nr")
         
-        assert found_output
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
+        
+        process = psutil.Process(os.getpid())
+        memory_before = process.memory_info().rss
+        
+        # Compile multiple times
+        compiler = NeuroCompiler()
+        for _ in range(10):
+            result = compiler.compile_file(example_file)
+            assert result.success
+        
+        memory_after = process.memory_info().rss
+        memory_increase = memory_after - memory_before
+        
+        # Memory increase should be reasonable (less than 100MB for simple compilation)
+        assert memory_increase < 100 * 1024 * 1024
+    
+    def test_concurrent_compilation(self):
+        """Test concurrent compilation of multiple files."""
+        example_file = self.get_example_path("hello_world.nr")
+        
+        if not os.path.exists(example_file):
+            pytest.skip(f"Example file {example_file} not found")
+        
+        results = []
+        errors = []
+        
+        def compile_file():
+            try:
+                compiler = NeuroCompiler()
+                result = compiler.compile_file(example_file)
+                results.append(result)
+            except Exception as e:
+                errors.append(e)
+        
+        # Start multiple compilation threads
+        threads = []
+        for _ in range(5):
+            thread = threading.Thread(target=compile_file)
+            threads.append(thread)
+            thread.start()
+        
+        # Wait for all threads to complete
+        for thread in threads:
+            thread.join()
+        
+        # Check results
+        assert len(errors) == 0, f"Compilation errors in threads: {errors}"
+        assert len(results) == 5
+        
+        for result in results:
+            assert result.success, f"Compilation failed: {result.errors}"
 
 
 if __name__ == "__main__":

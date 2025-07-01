@@ -1,336 +1,439 @@
 """
 NEURO Compiler
-
-Main compiler class that orchestrates all compilation phases:
-1. AST Processing and Validation
-2. Type Checking and Inference
-3. Optimization Passes
-4. Code Generation (LLVM IR)
-5. Linking and Output
-
-This is the core of the NEURO compiler that transforms AST into executable code.
+Orchestrates the compilation pipeline: lexing -> parsing -> type checking -> code generation.
 """
 
 import os
-import subprocess
-from pathlib import Path
+import sys
+import time
 from typing import Optional, List, Dict, Any
+from dataclasses import dataclass
+from enum import Enum, auto
 
-from .ast_nodes import Program, ASTNode
-from .errors import CompilerError, SourceLocation
-from .type_checker import TypeChecker
+from .lexer import NeuroLexer, Token
+from .parser import NeuroParser
+from .ast_nodes import Program
+from .type_checker import NeuroTypeChecker
+from .errors import ErrorReporter, NeuroError
+
+
+class OptimizationLevel(Enum):
+    """Optimization levels for compilation."""
+    O0 = auto()  # No optimization
+    O1 = auto()  # Basic optimization
+    O2 = auto()  # Standard optimization
+    O3 = auto()  # Aggressive optimization
+
+
+@dataclass
+class CompileOptions:
+    """Configuration options for compilation."""
+    optimization_level: OptimizationLevel = OptimizationLevel.O2
+    target_platform: str = "cpu"  # cpu, cuda, opencl, etc.
+    output_format: str = "executable"  # executable, llvm-ir, assembly
+    debug_info: bool = False
+    emit_tokens: bool = False
+    emit_ast: bool = False
+    emit_llvm_ir: bool = False
+    verbose: bool = False
+    output_file: Optional[str] = None
+
+
+@dataclass
+class CompileResult:
+    """Result of compilation process."""
+    success: bool
+    program: Optional[Program] = None
+    tokens: Optional[List[Token]] = None
+    output_file: Optional[str] = None
+    compilation_time: float = 0.0
+    errors: List[str] = None
+    warnings: List[str] = None
+    
+    def __post_init__(self):
+        if self.errors is None:
+            self.errors = []
+        if self.warnings is None:
+            self.warnings = []
 
 
 class NeuroCompiler:
-    """
-    Main compiler class for the NEURO programming language.
+    """Main compiler class for the NEURO programming language."""
     
-    Handles the complete compilation pipeline from AST to executable,
-    including type checking, optimization, and code generation.
-    """
+    def __init__(self, options: Optional[CompileOptions] = None):
+        self.options = options or CompileOptions()
+        self.error_reporter = ErrorReporter()
     
-    def __init__(self, optimization_level: int = 1, verbose: bool = False, debug: bool = False):
-        """
-        Initialize the NEURO compiler.
-        
-        Args:
-            optimization_level: Optimization level (0-3)
-            verbose: Enable verbose output
-            debug: Enable debug mode output
-        """
-        self.optimization_level = optimization_level
-        self.verbose = verbose
-        self.debug = debug
-        
-        # Compilation state
-        self.symbol_table: Dict[str, Any] = {}
-        self.type_cache: Dict[ASTNode, str] = {}
-        self.current_module = ""
-        
-        # Standard library and built-ins
-        self._init_builtin_types()
-        self._init_standard_library()
-    
-    def compile(self, ast: Program, output_path: str, emit_llvm_ir: bool = False) -> None:
-        """
-        Compile an AST to executable code.
-        
-        Args:
-            ast: The AST to compile
-            output_path: Path for the output executable
-            emit_llvm_ir: Whether to emit LLVM IR instead of compiling
-            
-        Raises:
-            CompilerError: If compilation fails
-        """
-        try:
-            if self.verbose:
-                print("Starting NEURO compilation...")
-            
-            # Phase 1: AST Validation and Preprocessing
-            if self.verbose:
-                print("Phase 1: AST Validation")
-            self._validate_ast(ast)
-            
-            # Phase 2: Type Checking and Inference
-            if self.verbose:
-                print("Phase 2: Type Checking")
-            self._type_check(ast)
-            
-            # Phase 3: Optimization
-            if self.verbose:
-                print("Phase 3: Optimization")
-            optimized_ast = self._optimize(ast)
-            
-            # Phase 4: Code Generation
-            if self.verbose:
-                print("Phase 4: Code Generation")
-            
-            if emit_llvm_ir:
-                llvm_ir = self._generate_llvm_ir(optimized_ast)
-                print("=== LLVM IR ===")
-                print(llvm_ir)
-                return
-            
-            # Generate and compile to executable
-            self._compile_to_executable(optimized_ast, output_path)
-            
-            if self.verbose:
-                print(f"Compilation successful: {output_path}")
-                
-        except Exception as e:
-            raise CompilerError(f"Compilation failed: {e}")
-    
-    # ========================================================================
-    # Phase 1: AST Validation
-    # ========================================================================
-    
-    def _validate_ast(self, ast: Program) -> None:
-        """Validate the AST for basic correctness."""
-        # Basic AST validation
-        if not ast.statements:
-            raise CompilerError("Empty program")
-        
-        # Check for duplicate function/struct names
-        names = set()
-        for stmt in ast.statements:
-            if hasattr(stmt, 'name'):
-                if stmt.name in names:
-                    raise CompilerError(
-                        f"Duplicate definition: {stmt.name}",
-                        stmt.location
-                    )
-                names.add(stmt.name)
-        
-        if self.verbose:
-            print(f"  ✓ AST validation passed ({len(ast.statements)} statements)")
-    
-    # ========================================================================
-    # Phase 2: Type Checking
-    # ========================================================================
-    
-    def _type_check(self, ast: Program) -> None:
-        """Perform type checking and inference on the AST."""
-        # Create type checker instance
-        type_checker = TypeChecker(verbose=self.verbose, debug=self.debug)
-        
-        # Perform comprehensive type checking
-        self.type_cache = type_checker.check_program(ast)
-        
-        if self.verbose:
-            print(f"  ✓ Type checking completed - {len(self.type_cache)} types inferred")
-    
-    # ========================================================================
-    # Phase 3: Optimization
-    # ========================================================================
-    
-    def _optimize(self, ast: Program) -> Program:
-        """Apply optimization passes to the AST."""
-        # Placeholder for optimization passes
-        # In a full implementation, this would include:
-        # 1. Dead code elimination
-        # 2. Constant folding
-        # 3. Tensor operation fusion
-        # 4. Memory layout optimization
-        # 5. Loop optimization
-        
-        if self.verbose:
-            level_name = ["none", "basic", "standard", "aggressive"][self.optimization_level]
-            print(f"  ✓ Optimization level {self.optimization_level} ({level_name})")
-        
-        return ast
-    
-    # ========================================================================
-    # Phase 4: Code Generation
-    # ========================================================================
-    
-    def _generate_llvm_ir(self, ast: Program) -> str:
-        """Generate LLVM IR from the optimized AST."""
-        # Placeholder LLVM IR generation
-        # This would be a full LLVM IR generator in the real implementation
-        
-        ir_lines = [
-            "; NEURO Compiled Program",
-            f"; Optimization Level: {self.optimization_level}",
-            "",
-            "target triple = \"x86_64-pc-windows-msvc\"",
-            "",
-            "declare i32 @printf(i8*, ...)",
-            "",
-            "@hello_str = private unnamed_addr constant [13 x i8] c\"Hello NEURO!\\00\"",
-            "",
-            "define i32 @main() {",
-            "entry:",
-            "  %0 = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([13 x i8], [13 x i8]* @hello_str, i32 0, i32 0))",
-            "  ret i32 0",
-            "}",
-            ""
-        ]
-        
-        return "\n".join(ir_lines)
-    
-    def _compile_to_executable(self, ast: Program, output_path: str) -> None:
-        """Compile AST to executable via LLVM."""
-        # Generate LLVM IR
-        llvm_ir = self._generate_llvm_ir(ast)
-        
-        # Write IR to temporary file
-        ir_file = Path(output_path).with_suffix('.ll')
-        with open(ir_file, 'w') as f:
-            f.write(llvm_ir)
+    def compile_file(self, filename: str) -> CompileResult:
+        """Compile a NEURO source file."""
+        start_time = time.time()
         
         try:
-            # Use clang to compile LLVM IR to executable
-            # This is a simplified approach - real implementation would use LLVM APIs
-            clang_cmd = [
-                'clang',
-                str(ir_file),
-                '-O' + str(self.optimization_level),
-                '-o', output_path
-            ]
+            # Read source file
+            with open(filename, 'r', encoding='utf-8') as f:
+                source_code = f.read()
             
-            if self.verbose:
-                print(f"  Running: {' '.join(clang_cmd)}")
-            
-            result = subprocess.run(clang_cmd, capture_output=True, text=True)
-            
-            if result.returncode != 0:
-                error_message = f"""LLVM compilation failed.
-Command: {' '.join(clang_cmd)}
-Exit Code: {result.returncode}
---- Clang Stdout: ---
-{result.stdout}
---- Clang Stderr: ---
-{result.stderr}
-"""
-                raise CompilerError(error_message)
+            return self.compile_source(source_code, filename)
             
         except FileNotFoundError:
-            # LLVM/clang not available
-            raise CompilerError(
-                "Compiler command 'clang' not found. "
-                "Please install LLVM and ensure 'clang' is in your system's PATH."
+            self.error_reporter.error(f"File not found: {filename}")
+            return CompileResult(
+                success=False,
+                compilation_time=time.time() - start_time,
+                errors=[f"File not found: {filename}"]
             )
-        
-        # Clean up IR file
-        if ir_file.exists():
-            ir_file.unlink()
+        except Exception as e:
+            self.error_reporter.error(f"Error reading file {filename}: {e}")
+            return CompileResult(
+                success=False,
+                compilation_time=time.time() - start_time,
+                errors=[f"Error reading file {filename}: {e}"]
+            )
     
-    def _create_c_fallback(self, output_path: str) -> None:
-        """Create a simple C program as fallback when LLVM is not available."""
-        c_code = '''
-#include <stdio.h>
-
-int main() {
-    printf("Hello from NEURO! (compiled fallback)\\n");
-    printf("This is a placeholder executable - full NEURO compilation requires LLVM\\n");
-    return 0;
-}
-'''
-        
-        c_file = Path(output_path).with_suffix('.c')
+    def compile_source(self, source_code: str, filename: str = "<input>") -> CompileResult:
+        """Compile NEURO source code."""
+        start_time = time.time()
+        result = CompileResult(success=False)
         
         try:
-            # Write C code
-            with open(c_file, 'w') as f:
-                f.write(c_code)
+            # Step 1: Lexical Analysis
+            if self.options.verbose:
+                print(f"Lexing {filename}...")
             
-            # Compile with gcc/cl
-            if os.name == 'nt':  # Windows
-                compile_cmd = ['cl', str(c_file), '/Fe:' + output_path]
-            else:  # Unix-like
-                compile_cmd = ['gcc', str(c_file), '-o', output_path]
+            lexer = NeuroLexer(source_code, filename)
+            tokens = lexer.tokenize()
             
-            result = subprocess.run(compile_cmd, capture_output=True, text=True)
+            if lexer.get_error_reporter().has_errors():
+                result.errors.extend([str(e) for e in lexer.get_error_reporter().errors])
+                return result
             
-            if result.returncode != 0:
-                # Create batch/shell script as final fallback
-                self._create_script_fallback(output_path)
+            if self.options.emit_tokens:
+                self._emit_tokens(tokens)
             
-        except (FileNotFoundError, subprocess.SubprocessError):
-            # Create script as final fallback
-            self._create_script_fallback(output_path)
+            result.tokens = tokens
+            
+            # Step 2: Parsing
+            if self.options.verbose:
+                print(f"Parsing {filename}...")
+            
+            parser = NeuroParser(tokens)
+            program = parser.parse()
+            
+            if parser.get_error_reporter().has_errors():
+                result.errors.extend([str(e) for e in parser.get_error_reporter().errors])
+                return result
+            
+            if self.options.emit_ast:
+                self._emit_ast(program)
+            
+            result.program = program
+            
+            # Step 3: Type Checking
+            if self.options.verbose:
+                print(f"Type checking {filename}...")
+            
+            type_checker = NeuroTypeChecker()
+            typed_program = type_checker.check_program(program)
+            
+            if type_checker.get_error_reporter().has_errors():
+                result.errors.extend([str(e) for e in type_checker.get_error_reporter().errors])
+                return result
+            
+            # Collect warnings
+            if type_checker.get_error_reporter().has_warnings():
+                result.warnings.extend(type_checker.get_error_reporter().warnings)
+            
+            # Step 4: Code Generation
+            if self.options.verbose:
+                print(f"Generating code for {filename}...")
+            
+            output_file = self._generate_code(typed_program, filename)
+            result.output_file = output_file
+            
+            result.success = True
+            
+        except NeuroError as e:
+            result.errors.append(str(e))
+        except Exception as e:
+            result.errors.append(f"Internal compiler error: {e}")
+            # Print traceback for debugging
+            if self.options.verbose:
+                import traceback
+                traceback.print_exc()
         
-        # Clean up C file
-        if c_file.exists():
-            c_file.unlink()
+        result.compilation_time = time.time() - start_time
+        
+        if self.options.verbose:
+            self._print_compilation_summary(result)
+        
+        return result
     
-    def _create_script_fallback(self, output_path: str) -> None:
-        """Create a script file as final fallback."""
-        if os.name == 'nt':  # Windows
-            script_content = '@echo off\necho Hello from NEURO! (script fallback)\necho Full compilation requires LLVM and clang\npause\n'
-            script_path = Path(output_path).with_suffix('.bat')
-        else:  # Unix-like
-            script_content = '#!/bin/bash\necho "Hello from NEURO! (script fallback)"\necho "Full compilation requires LLVM and clang"\n'
-            script_path = Path(output_path).with_suffix('.sh')
-        
-        with open(script_path, 'w') as f:
-            f.write(script_content)
-        
-        # Make executable on Unix-like systems
-        if os.name != 'nt':
-            os.chmod(script_path, 0o755)
-        
-        if self.verbose:
-            print(f"  Created script fallback: {script_path}")
+    def _emit_tokens(self, tokens: List[Token]) -> None:
+        """Emit tokens for debugging."""
+        print("=== TOKENS ===")
+        for i, token in enumerate(tokens):
+            print(f"{i:3d}: {token}")
+        print()
     
-    # ========================================================================
-    # Built-in Types and Standard Library
-    # ========================================================================
+    def _emit_ast(self, program: Program) -> None:
+        """Emit AST for debugging."""
+        print("=== AST ===")
+        print(f"Program with {len(program.declarations)} declarations and {len(program.statements)} statements")
+        
+        for i, decl in enumerate(program.declarations):
+            print(f"Declaration {i}: {decl}")
+        
+        for i, stmt in enumerate(program.statements):
+            print(f"Statement {i}: {stmt}")
+        print()
     
-    def _init_builtin_types(self) -> None:
-        """Initialize built-in types in the compiler."""
-        self.builtin_types = {
-            'int': {'size': 32, 'signed': True},
-            'float': {'size': 32, 'format': 'ieee754'},
-            'bool': {'size': 1},
-            'string': {'type': 'utf8'},
-        }
+    def _generate_code(self, program: Program, source_filename: str) -> str:
+        """Generate code from the typed AST."""
+        # For now, generate a simple interpretable format
+        # In a full implementation, this would generate LLVM IR or machine code
         
-        # Tensor types are handled dynamically
+        base_name = os.path.splitext(os.path.basename(source_filename))[0]
         
-    def _init_standard_library(self) -> None:
-        """Initialize standard library functions."""
-        self.stdlib_functions = {
-            'print': {
-                'params': ['string'],
-                'return': 'void',
-                'builtin': True
-            },
-            'len': {
-                'params': ['tensor'],
-                'return': 'int',
-                'builtin': True
-            },
-            # Neural network functions would be added here
-            'relu': {
-                'params': ['tensor'],
-                'return': 'tensor',
-                'gpu_available': True
-            },
-            'softmax': {
-                'params': ['tensor'],
-                'return': 'tensor',
-                'gpu_available': True
-            }
-        } 
+        if self.options.output_file:
+            output_file = self.options.output_file
+        else:
+            if self.options.output_format == "llvm-ir":
+                output_file = f"{base_name}.ll"
+            elif self.options.output_format == "assembly":
+                output_file = f"{base_name}.s"
+            else:
+                # Executable - use .bat for Windows since we generate batch wrappers
+                output_file = f"{base_name}.bat" if sys.platform == "win32" else base_name
+        
+        if self.options.output_format == "llvm-ir":
+            self._generate_llvm_ir(program, output_file)
+        elif self.options.output_format == "assembly":
+            self._generate_assembly(program, output_file)
+        else:
+            self._generate_executable(program, output_file)
+        
+        return output_file
+    
+    def _generate_llvm_ir(self, program: Program, output_file: str) -> None:
+        """Generate LLVM IR code."""
+        # Simplified LLVM IR generation
+        llvm_code = self._generate_basic_llvm(program)
+        
+        with open(output_file, 'w') as f:
+            f.write(llvm_code)
+        
+        if self.options.emit_llvm_ir:
+            print("=== LLVM IR ===")
+            print(llvm_code)
+    
+    def _generate_assembly(self, program: Program, output_file: str) -> None:
+        """Generate assembly code."""
+        # For now, just create a stub assembly file
+        asm_code = f"""
+; Generated by NEURO compiler
+; Source: {program}
+
+.section .text
+.globl _start
+
+_start:
+    ; Program entry point
+    mov $60, %rax    ; sys_exit
+    mov $0, %rdi     ; exit status
+    syscall          ; invoke system call
+"""
+        
+        with open(output_file, 'w') as f:
+            f.write(asm_code)
+    
+    def _generate_executable(self, program: Program, output_file: str) -> None:
+        """Generate executable code."""
+        # For now, generate a Python script that can interpret the AST
+        # In a full implementation, this would compile to machine code
+        
+        python_code = self._generate_python_interpreter(program)
+        
+        # Write Python file
+        py_file = output_file + ".py"
+        with open(py_file, 'w') as f:
+            f.write(python_code)
+        
+        # Create executable wrapper script
+        if sys.platform == "win32":
+            batch_content = f"@echo off\npython {py_file} %*\n"
+            with open(output_file, 'w') as f:
+                f.write(batch_content)
+        else:
+            script_content = f"#!/bin/bash\npython3 {py_file} \"$@\"\n"
+            with open(output_file, 'w') as f:
+                f.write(script_content)
+            os.chmod(output_file, 0o755)  # Make executable
+    
+    def _generate_basic_llvm(self, program: Program) -> str:
+        """Generate basic LLVM IR."""
+        # Simplified LLVM IR generation
+        llvm_code = """
+; Generated by NEURO compiler
+target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+target triple = "x86_64-unknown-linux-gnu"
+
+@.str = private unnamed_addr constant [13 x i8] c"Hello World!\\00", align 1
+
+declare i32 @printf(i8*, ...)
+
+define i32 @main() {
+entry:
+  %call = call i32 (i8*, ...) @printf(i8* getelementptr inbounds ([13 x i8], [13 x i8]* @.str, i32 0, i32 0))
+  ret i32 0
+}
+"""
+        return llvm_code
+    
+    def _generate_python_interpreter(self, program: Program) -> str:
+        """Generate Python code that interprets the NEURO program."""
+        # Create a simple Python interpreter for the AST
+        code = f'''#!/usr/bin/env python3
+"""
+Generated NEURO program interpreter
+"""
+
+import sys
+import math
+
+# Built-in functions
+def neuro_print(value):
+    print(str(value))
+    return str(value)
+
+def neuro_str(value):
+    return str(value)
+
+def neuro_float(value):
+    return float(value)
+
+# Global variables
+globals_dict = {{}}
+
+# Tensor operations (simplified)
+class Tensor:
+    def __init__(self, data, shape=None):
+        if isinstance(data, list):
+            self.data = data
+            if shape is None:
+                self.shape = self._infer_shape(data)
+            else:
+                self.shape = shape
+        else:
+            self.data = data
+            self.shape = shape or []
+    
+    def _infer_shape(self, data):
+        if isinstance(data, list):
+            if data and isinstance(data[0], list):
+                return [len(data), len(data[0])]
+            else:
+                return [len(data)]
+        return []
+    
+    def __matmul__(self, other):
+        # Simple dot product for vectors
+        if isinstance(other, Tensor) and len(self.shape) == 1 and len(other.shape) == 1:
+            return sum(a * b for a, b in zip(self.data, other.data))
+        return Tensor(self.data)  # Simplified
+    
+    def __add__(self, other):
+        if isinstance(other, Tensor):
+            return Tensor([a + b for a, b in zip(self.data, other.data)])
+        return Tensor([a + other for a in self.data])
+    
+    def __str__(self):
+        return f"Tensor({{self.data}})"
+
+def zeros(rows, cols):
+    return Tensor([[0.0 for _ in range(cols)] for _ in range(rows)])
+
+# Neural Network (simplified)
+class NeuralNetwork:
+    def __init__(self, element_type, shape_params, layers):
+        self.element_type = element_type
+        self.shape_params = shape_params
+        self.layers = layers
+    
+    def forward(self, input_data):
+        # Simplified forward pass
+        return Tensor([0.0] * self.shape_params[-1])
+
+def dense_layer(units, activation=None):
+    return {{"type": "dense", "units": units, "activation": activation}}
+
+def batch_norm():
+    return {{"type": "batch_norm"}}
+
+def dropout(rate):
+    return {{"type": "dropout", "rate": rate}}
+
+# Main program execution
+def main():
+    try:
+{self._generate_program_body(program)}
+        
+        # Execute main function if it exists
+        if 'main' in globals_dict:
+            globals_dict['main']()
+        
+    except Exception as e:
+        print(f"Runtime error: {{e}}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+'''
+        return code
+    
+    def _generate_program_body(self, program: Program) -> str:
+        """Generate the main body of the Python interpreter."""
+        # Simplified code generation for declarations and statements
+        lines = []
+        
+        # Generate function declarations
+        for decl in program.declarations:
+            if hasattr(decl, 'name'):
+                lines.append(f"        # Function: {decl.name}")
+                lines.append(f"        def {decl.name}():")
+                lines.append(f"            pass  # Function body would be generated here")
+                lines.append(f"        globals_dict['{decl.name}'] = {decl.name}")
+                lines.append("")
+        
+        # Generate top-level statements
+        for stmt in program.statements:
+            lines.append(f"        # Statement: {type(stmt).__name__}")
+            if hasattr(stmt, 'name'):
+                lines.append(f"        # Variable: {stmt.name}")
+            lines.append(f"        pass  # Statement would be generated here")
+        
+        return "\n".join(lines)
+    
+    def _print_compilation_summary(self, result: CompileResult) -> None:
+        """Print compilation summary."""
+        print(f"\n=== COMPILATION SUMMARY ===")
+        print(f"Success: {result.success}")
+        print(f"Time: {result.compilation_time:.3f}s")
+        
+        if result.errors:
+            print(f"Errors: {len(result.errors)}")
+            for error in result.errors:
+                print(f"  - {error}")
+        
+        if result.warnings:
+            print(f"Warnings: {len(result.warnings)}")
+            for warning in result.warnings:
+                print(f"  - {warning}")
+        
+        if result.output_file:
+            print(f"Output: {result.output_file}")
+        
+        print()
+    
+    def get_error_reporter(self) -> ErrorReporter:
+        """Get the error reporter."""
+        return self.error_reporter 

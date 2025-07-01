@@ -1,25 +1,18 @@
 """
-NEURO Lexer (Tokenizer)
-
-Converts NEURO source code into a stream of tokens for parsing.
-Handles all language constructs including:
-- Keywords and identifiers
-- Literals (numbers, strings, booleans)
-- Operators and punctuation
-- Comments and whitespace
-- Tensor syntax and AI-specific constructs
+Lexical Analysis Slice
+Tokenizes NEURO source code into a stream of tokens.
 """
 
 import re
 from enum import Enum, auto
-from typing import List, Optional, Iterator, NamedTuple, Union
+from typing import List, Optional, Iterator, NamedTuple
 from dataclasses import dataclass
 
-from .errors import LexerError, SourceLocation
+from .errors import SourceLocation, ErrorReporter, NeuroSyntaxError
 
 
 class TokenType(Enum):
-    """Enumeration of all token types in the NEURO language."""
+    """Token types for the NEURO language."""
     
     # Literals
     INTEGER = auto()
@@ -30,115 +23,65 @@ class TokenType(Enum):
     # Identifiers and keywords
     IDENTIFIER = auto()
     
-    # Keywords - Control Flow
+    # Keywords
+    FUNC = auto()
+    LET = auto()
     IF = auto()
     ELSE = auto()
-    ELIF = auto()
     FOR = auto()
     IN = auto()
-    WHILE = auto()
-    BREAK = auto()
-    CONTINUE = auto()
     RETURN = auto()
-    MATCH = auto()
-    CASE = auto()
-    
-    # Keywords - Declarations
-    LET = auto()
-    FUNC = auto()
     STRUCT = auto()
-    ENUM = auto()
-    IMPL = auto()
-    TRAIT = auto()
-    IMPORT = auto()
+    TRUE = auto()
+    FALSE = auto()
     
-    # Keywords - Types
-    INT = auto()
+    # Types
+    INT_TYPE = auto()
     FLOAT_TYPE = auto()
-    BOOL = auto()
     STRING_TYPE = auto()
+    BOOL_TYPE = auto()
     TENSOR = auto()
     
-    # Keywords - AI/ML specific
-    MODEL = auto()
-    LAYER = auto()
-    NEURALNETWORK = auto()
-    DATASET = auto()
-    OPTIMIZER = auto()
-    LOSS = auto()
-    ACTIVATION = auto()
+    # Operators
+    PLUS = auto()
+    MINUS = auto()
+    MULTIPLY = auto()
+    DIVIDE = auto()
+    MODULO = auto()
+    MATRIX_MULT = auto()  # @
     
-    # Keywords - Memory and concurrency
-    REF = auto()
-    MUT = auto()
-    ASYNC = auto()
-    AWAIT = auto()
+    # Comparison
+    EQUAL = auto()
+    NOT_EQUAL = auto()
+    LESS_THAN = auto()
+    LESS_EQUAL = auto()
+    GREATER_THAN = auto()
+    GREATER_EQUAL = auto()
     
-    # Keywords - GPU/Meta-programming
-    GPU = auto()
-    KERNEL = auto()
-    DEVICE = auto()
+    # Assignment
+    ASSIGN = auto()
     
-    # Operators - Arithmetic
-    PLUS = auto()          # +
-    MINUS = auto()         # -
-    MULTIPLY = auto()      # *
-    DIVIDE = auto()        # /
-    MODULO = auto()        # %
-    POWER = auto()         # **
-    
-    # Operators - Comparison
-    EQUAL = auto()         # ==
-    NOT_EQUAL = auto()     # !=
-    LESS = auto()          # <
-    LESS_EQUAL = auto()    # <=
-    GREATER = auto()       # >
-    GREATER_EQUAL = auto() # >=
-    
-    # Operators - Logical
-    AND = auto()           # &&
-    OR = auto()            # ||
-    NOT = auto()           # !
-    
-    # Operators - Bitwise
-    BIT_AND = auto()       # &
-    BIT_OR = auto()        # |
-    BIT_XOR = auto()       # ^
-    BIT_NOT = auto()       # ~
-    BIT_LSHIFT = auto()    # <<
-    BIT_RSHIFT = auto()    # >>
-    
-    # Operators - Assignment
-    ASSIGN = auto()        # =
-    PLUS_ASSIGN = auto()   # +=
-    MINUS_ASSIGN = auto()  # -=
-    MULTIPLY_ASSIGN = auto() # *=
-    DIVIDE_ASSIGN = auto() # /=
-    
-    # Operators - Matrix/Tensor
-    MATRIX_MUL = auto()    # @
-    DOT = auto()           # .
-    RANGE = auto()         # ..
-    RANGE_INCLUSIVE = auto() # ..=
+    # Logical
+    AND = auto()
+    OR = auto()
+    NOT = auto()
     
     # Punctuation
-    SEMICOLON = auto()     # ;
-    COMMA = auto()         # ,
-    COLON = auto()         # :
-    DOUBLE_COLON = auto()  # ::
-    ARROW = auto()         # ->
-    FAT_ARROW = auto()     # =>
-    QUESTION = auto()      # ?
+    SEMICOLON = auto()
+    COLON = auto()
+    COMMA = auto()
+    DOT = auto()
+    ARROW = auto()  # ->
     
     # Brackets
-    LPAREN = auto()        # (
-    RPAREN = auto()        # )
-    LBRACKET = auto()      # [
-    RBRACKET = auto()      # ]
-    LBRACE = auto()        # {
-    RBRACE = auto()        # }
-    LANGLE = auto()        # <
-    RANGLE = auto()        # >
+    LPAREN = auto()
+    RPAREN = auto()
+    LBRACE = auto()
+    RBRACE = auto()
+    LBRACKET = auto()
+    RBRACKET = auto()
+    LESS_BRACKET = auto()  # <
+    GREATER_BRACKET = auto()  # >
     
     # Special
     NEWLINE = auto()
@@ -148,385 +91,240 @@ class TokenType(Enum):
 
 @dataclass
 class Token:
-    """Represents a single token in the source code."""
+    """Represents a token in the source code."""
     type: TokenType
     value: str
-    line: int
-    column: int
-    filename: str = ""
+    location: SourceLocation
     
-    @property
-    def location(self) -> SourceLocation:
-        """Get the source location of this token."""
-        return SourceLocation(self.filename, self.line, self.column)
+    def __str__(self) -> str:
+        return f"Token({self.type.name}, '{self.value}', {self.location})"
 
 
 class NeuroLexer:
-    """
-    Lexical analyzer for the NEURO programming language.
-    
-    Converts source code text into a sequence of tokens that can be
-    parsed into an Abstract Syntax Tree (AST).
-    """
+    """Lexical analyzer for the NEURO programming language."""
     
     # Keywords mapping
     KEYWORDS = {
-        # Control flow
+        'func': TokenType.FUNC,
+        'let': TokenType.LET,
         'if': TokenType.IF,
         'else': TokenType.ELSE,
-        'elif': TokenType.ELIF,
         'for': TokenType.FOR,
         'in': TokenType.IN,
-        'while': TokenType.WHILE,
-        'break': TokenType.BREAK,
-        'continue': TokenType.CONTINUE,
         'return': TokenType.RETURN,
-        'match': TokenType.MATCH,
-        'case': TokenType.CASE,
-        
-        # Declarations
-        'let': TokenType.LET,
-        'func': TokenType.FUNC,
         'struct': TokenType.STRUCT,
-        'enum': TokenType.ENUM,
-        'impl': TokenType.IMPL,
-        'trait': TokenType.TRAIT,
-        'import': TokenType.IMPORT,
-        
-        # Types
-        'int': TokenType.INT,
+        'true': TokenType.TRUE,
+        'false': TokenType.FALSE,
+        'int': TokenType.INT_TYPE,
         'float': TokenType.FLOAT_TYPE,
-        'bool': TokenType.BOOL,
         'string': TokenType.STRING_TYPE,
-        'tensor': TokenType.TENSOR,
-        
-        # Literals
-        'true': TokenType.BOOLEAN,
-        'false': TokenType.BOOLEAN,
-        
-        # AI/ML specific
-        'model': TokenType.MODEL,
-        'layer': TokenType.LAYER,
-        'NeuralNetwork': TokenType.NEURALNETWORK,
-        'Dataset': TokenType.DATASET,
-        'optimizer': TokenType.OPTIMIZER,
-        'loss': TokenType.LOSS,
-        'activation': TokenType.ACTIVATION,
-        
-        # Memory and concurrency
-        'ref': TokenType.REF,
-        'mut': TokenType.MUT,
-        'async': TokenType.ASYNC,
-        'await': TokenType.AWAIT,
-        
-        # GPU/Meta-programming
-        'gpu': TokenType.GPU,
-        'kernel': TokenType.KERNEL,
-        'device': TokenType.DEVICE,
+        'bool': TokenType.BOOL_TYPE,
+        'Tensor': TokenType.TENSOR,
+        'and': TokenType.AND,
+        'or': TokenType.OR,
+        'not': TokenType.NOT,
     }
     
-    # Operator patterns (order matters for longest match)
-    OPERATORS = [
-        ('==', TokenType.EQUAL),
-        ('!=', TokenType.NOT_EQUAL),
-        ('<=', TokenType.LESS_EQUAL),
-        ('>=', TokenType.GREATER_EQUAL),
-        ('&&', TokenType.AND),
-        ('||', TokenType.OR),
-        ('<<', TokenType.BIT_LSHIFT),
-        ('>>', TokenType.BIT_RSHIFT),
-        ('+=', TokenType.PLUS_ASSIGN),
-        ('-=', TokenType.MINUS_ASSIGN),
-        ('*=', TokenType.MULTIPLY_ASSIGN),
-        ('/=', TokenType.DIVIDE_ASSIGN),
-        ('->', TokenType.ARROW),
-        ('=>', TokenType.FAT_ARROW),
-        ('::', TokenType.DOUBLE_COLON),
-        ('..=', TokenType.RANGE_INCLUSIVE),
-        ('..', TokenType.RANGE),
-        ('**', TokenType.POWER),
-        ('+', TokenType.PLUS),
-        ('-', TokenType.MINUS),
-        ('*', TokenType.MULTIPLY),
-        ('/', TokenType.DIVIDE),
-        ('%', TokenType.MODULO),
-        ('@', TokenType.MATRIX_MUL),
-        ('<', TokenType.LESS),
-        ('>', TokenType.GREATER),
-        ('=', TokenType.ASSIGN),
-        ('!', TokenType.NOT),
-        ('&', TokenType.BIT_AND),
-        ('|', TokenType.BIT_OR),
-        ('^', TokenType.BIT_XOR),
-        ('~', TokenType.BIT_NOT),
-        ('.', TokenType.DOT),
-        (';', TokenType.SEMICOLON),
-        (',', TokenType.COMMA),
-        (':', TokenType.COLON),
-        ('?', TokenType.QUESTION),
-        ('(', TokenType.LPAREN),
-        (')', TokenType.RPAREN),
-        ('[', TokenType.LBRACKET),
-        (']', TokenType.RBRACKET),
-        ('{', TokenType.LBRACE),
-        ('}', TokenType.RBRACE),
-    ]
+    # Two-character operators
+    TWO_CHAR_OPERATORS = {
+        '->': TokenType.ARROW,
+        '==': TokenType.EQUAL,
+        '!=': TokenType.NOT_EQUAL,
+        '<=': TokenType.LESS_EQUAL,
+        '>=': TokenType.GREATER_EQUAL,
+        '&&': TokenType.AND,
+        '||': TokenType.OR,
+    }
     
-    def __init__(self):
-        self.text = ""
-        self.pos = 0
-        self.line = 1
-        self.column = 1
-        self.filename = ""
+    # Single-character operators and punctuation
+    SINGLE_CHAR_TOKENS = {
+        '+': TokenType.PLUS,
+        '-': TokenType.MINUS,
+        '*': TokenType.MULTIPLY,
+        '/': TokenType.DIVIDE,
+        '%': TokenType.MODULO,
+        '@': TokenType.MATRIX_MULT,
+        '=': TokenType.ASSIGN,
+        '<': TokenType.LESS_THAN,
+        '>': TokenType.GREATER_THAN,
+        '!': TokenType.NOT,
+        ';': TokenType.SEMICOLON,
+        ':': TokenType.COLON,
+        ',': TokenType.COMMA,
+        '.': TokenType.DOT,
+        '(': TokenType.LPAREN,
+        ')': TokenType.RPAREN,
+        '{': TokenType.LBRACE,
+        '}': TokenType.RBRACE,
+        '[': TokenType.LBRACKET,
+        ']': TokenType.RBRACKET,
+    }
     
-    def tokenize(self, text: str, filename: str = "") -> List[Token]:
-        """
-        Tokenize the input text into a list of tokens.
-        
-        Args:
-            text: Source code to tokenize
-            filename: Optional filename for error reporting
-            
-        Returns:
-            List of tokens
-            
-        Raises:
-            LexerError: If invalid syntax is encountered
-        """
-        self.text = text
-        self.pos = 0
-        self.line = 1
-        self.column = 1
+    def __init__(self, source: str, filename: str = "<input>"):
+        self.source = source
         self.filename = filename
-        
-        tokens = []
-        
-        while self.pos < len(self.text):
-            # Skip whitespace (except newlines)
-            if self.current_char() in ' \t\r':
-                self.advance()
-                continue
-            
-            # Handle newlines
-            if self.current_char() == '\n':
-                tokens.append(self.make_token(TokenType.NEWLINE, '\n'))
-                self.advance_newline()
-                continue
-            
-            # Handle comments
-            if self.current_char() == '/' and self.peek() == '/':
-                self.skip_line_comment()
-                continue
-            
-            if self.current_char() == '/' and self.peek() == '*':
-                self.skip_block_comment()
-                continue
-            
-            # Handle string literals
-            if self.current_char() in '"\'':
-                tokens.append(self.read_string())
-                continue
-            
-            # Handle numeric literals
-            if self.current_char().isdigit():
-                tokens.append(self.read_number())
-                continue
-            
-            # Handle identifiers and keywords
-            if self.current_char().isalpha() or self.current_char() == '_':
-                tokens.append(self.read_identifier())
-                continue
-            
-            # Handle operators and punctuation
-            operator_token = self.read_operator()
-            if operator_token:
-                tokens.append(operator_token)
-                continue
-            
-            # Unknown character
-            raise LexerError(
-                f"Unexpected character",
-                SourceLocation(self.filename, self.line, self.column),
-                self.current_char()
-            )
-        
-        # Add EOF token
-        tokens.append(self.make_token(TokenType.EOF, ""))
-        return tokens
+        self.position = 0
+        self.line = 1
+        self.column = 1
+        self.error_reporter = ErrorReporter()
     
-    def current_char(self) -> str:
-        """Get the current character, or empty string if at end."""
-        if self.pos >= len(self.text):
-            return ''
-        return self.text[self.pos]
+    def current_char(self) -> Optional[str]:
+        """Get the current character."""
+        if self.position >= len(self.source):
+            return None
+        return self.source[self.position]
     
-    def peek(self, offset: int = 1) -> str:
-        """Peek at character ahead by offset, or empty string if past end."""
-        peek_pos = self.pos + offset
-        if peek_pos >= len(self.text):
-            return ''
-        return self.text[peek_pos]
+    def peek_char(self, offset: int = 1) -> Optional[str]:
+        """Peek at a character ahead."""
+        pos = self.position + offset
+        if pos >= len(self.source):
+            return None
+        return self.source[pos]
     
     def advance(self) -> None:
         """Move to the next character."""
-        if self.pos < len(self.text):
-            self.pos += 1
-            self.column += 1
+        if self.position < len(self.source):
+            if self.source[self.position] == '\n':
+                self.line += 1
+                self.column = 1
+            else:
+                self.column += 1
+            self.position += 1
     
-    def advance_newline(self) -> None:
-        """Move to the next character, handling newline."""
-        self.pos += 1
-        self.line += 1
-        self.column = 1
+    def current_location(self) -> SourceLocation:
+        """Get the current source location."""
+        return SourceLocation(self.filename, self.line, self.column)
     
-    def make_token(self, token_type: TokenType, value: str) -> Token:
-        """Create a token at the current position."""
-        return Token(token_type, value, self.line, self.column - len(value), self.filename)
+    def skip_whitespace(self) -> None:
+        """Skip whitespace characters except newlines."""
+        while (self.current_char() is not None and 
+               self.current_char() in ' \t\r'):
+            self.advance()
     
-    def read_string(self) -> Token:
+    def read_string(self) -> str:
         """Read a string literal."""
         quote_char = self.current_char()
-        start_column = self.column
-        value = ""
+        value = quote_char  # Start with the opening quote
         self.advance()  # Skip opening quote
         
-        while self.current_char() and self.current_char() != quote_char:
+        while self.current_char() is not None and self.current_char() != quote_char:
             if self.current_char() == '\\':
+                value += self.current_char()  # Add backslash
                 self.advance()
-                if not self.current_char():
-                    raise LexerError(
-                        "Unterminated string literal",
-                        SourceLocation(self.filename, self.line, start_column)
-                    )
-                
-                # Handle escape sequences
-                escape_char = self.current_char()
-                if escape_char == 'n':
-                    value += '\n'
-                elif escape_char == 't':
-                    value += '\t'
-                elif escape_char == 'r':
-                    value += '\r'
-                elif escape_char == '\\':
-                    value += '\\'
-                elif escape_char == quote_char:
-                    value += quote_char
-                else:
-                    value += escape_char
-                
-                self.advance()
-            elif self.current_char() == '\n':
-                # Multi-line strings are allowed
-                value += self.current_char()
-                self.advance_newline()
+                if self.current_char() is None:
+                    break
+                value += self.current_char()  # Add escaped character as-is
             else:
                 value += self.current_char()
-                self.advance()
+            self.advance()
         
-        if not self.current_char():
-            raise LexerError(
+        if self.current_char() == quote_char:
+            value += quote_char  # Add closing quote
+            self.advance()  # Skip closing quote
+        else:
+            self.error_reporter.syntax_error(
                 "Unterminated string literal",
-                SourceLocation(self.filename, self.line, start_column)
+                self.current_location()
             )
         
-        self.advance()  # Skip closing quote
-        return Token(TokenType.STRING, value, self.line, start_column, self.filename)
+        return value
     
-    def read_number(self) -> Token:
-        """Read a numeric literal (integer or float)."""
-        start_column = self.column
+    def read_number(self) -> tuple[str, TokenType]:
+        """Read a numeric literal."""
         value = ""
         has_dot = False
         
-        while self.current_char() and (self.current_char().isdigit() or self.current_char() == '.'):
+        while (self.current_char() is not None and 
+               (self.current_char().isdigit() or self.current_char() == '.')):
             if self.current_char() == '.':
-                # Check for range operator (..)
-                if self.peek() == '.':
-                    break
-                
                 if has_dot:
-                    raise LexerError(
-                        "Invalid number format",
-                        SourceLocation(self.filename, self.line, self.column)
-                    )
+                    break  # Second dot, stop here
                 has_dot = True
-            
             value += self.current_char()
             self.advance()
         
-        # Handle scientific notation (e.g., 1.5e-10)
-        if self.current_char() and self.current_char().lower() == 'e':
-            has_dot = True  # Scientific notation makes it a float
-            value += self.current_char()
-            self.advance()
-            
-            if self.current_char() in '+-':
-                value += self.current_char()
-                self.advance()
-            
-            if not self.current_char() or not self.current_char().isdigit():
-                raise LexerError(
-                    "Invalid scientific notation",
-                    SourceLocation(self.filename, self.line, self.column)
-                )
-            
-            while self.current_char() and self.current_char().isdigit():
-                value += self.current_char()
-                self.advance()
-        
-        token_type = TokenType.FLOAT if has_dot else TokenType.INTEGER
-        return Token(token_type, value, self.line, start_column, self.filename)
+        if has_dot:
+            return value, TokenType.FLOAT
+        else:
+            return value, TokenType.INTEGER
     
-    def read_identifier(self) -> Token:
+    def read_identifier(self) -> str:
         """Read an identifier or keyword."""
-        start_column = self.column
         value = ""
-        
-        while (self.current_char() and 
+        while (self.current_char() is not None and 
                (self.current_char().isalnum() or self.current_char() == '_')):
             value += self.current_char()
             self.advance()
-        
-        # Check if it's a keyword
-        token_type = self.KEYWORDS.get(value, TokenType.IDENTIFIER)
-        return Token(token_type, value, self.line, start_column, self.filename)
+        return value
     
-    def read_operator(self) -> Optional[Token]:
-        """Read an operator or punctuation."""
-        start_column = self.column
+    def read_comment(self) -> str:
+        """Read a comment."""
+        value = ""
+        # Skip the //
+        self.advance()
+        self.advance()
         
-        # Try to match operators (longest first)
-        for op_text, op_type in self.OPERATORS:
-            if self.text[self.pos:].startswith(op_text):
-                # Advance by operator length
-                for _ in range(len(op_text)):
-                    self.advance()
-                return Token(op_type, op_text, self.line, start_column, self.filename)
-        
-        return None
-    
-    def skip_line_comment(self) -> None:
-        """Skip a line comment (//)."""
-        while self.current_char() and self.current_char() != '\n':
+        while self.current_char() is not None and self.current_char() != '\n':
+            value += self.current_char()
             self.advance()
+        
+        return value.strip()
     
-    def skip_block_comment(self) -> None:
-        """Skip a block comment (/* */)."""
-        self.advance()  # Skip '/'
-        self.advance()  # Skip '*'
+    def next_token(self) -> Token:
+        """Get the next token from the source."""
+        self.skip_whitespace()
         
-        while self.current_char():
-            if self.current_char() == '*' and self.peek() == '/':
-                self.advance()  # Skip '*'
-                self.advance()  # Skip '/'
-                return
-            
-            if self.current_char() == '\n':
-                self.advance_newline()
-            else:
-                self.advance()
+        location = self.current_location()
+        char = self.current_char()
         
-        raise LexerError(
-            "Unterminated block comment",
-            SourceLocation(self.filename, self.line, self.column)
-        ) 
+        if char is None:
+            return Token(TokenType.EOF, "", self.current_location())
+        
+        if char == '\n':
+            self.advance()
+            return Token(TokenType.NEWLINE, '\n', location)
+        
+        if char == '/' and self.peek_char() == '/':
+            comment = self.read_comment()
+            return Token(TokenType.COMMENT, comment, location)
+        
+        if char in '"\'':
+            string_value = self.read_string()
+            return Token(TokenType.STRING, string_value, location)
+        
+        if char.isdigit():
+            number_value, token_type = self.read_number()
+            return Token(token_type, number_value, location)
+        
+        if char.isalpha() or char == '_':
+            identifier = self.read_identifier()
+            token_type = self.KEYWORDS.get(identifier, TokenType.IDENTIFIER)
+            return Token(token_type, identifier, location)
+        
+        two_char = char + (self.peek_char() or '')
+        if two_char in self.TWO_CHAR_OPERATORS:
+            self.advance()
+            self.advance()
+            return Token(self.TWO_CHAR_OPERATORS[two_char], two_char, location)
+        
+        if char in self.SINGLE_CHAR_TOKENS:
+            self.advance()
+            return Token(self.SINGLE_CHAR_TOKENS[char], char, location)
+        
+        self.error_reporter.syntax_error(f"Unknown character '{char}'", location)
+        self.advance()
+        return self.next_token()
+
+    def tokenize(self) -> List[Token]:
+        """Tokenize the entire source code."""
+        tokens = []
+        while True:
+            token = self.next_token()
+            tokens.append(token)
+            if token.type == TokenType.EOF:
+                break
+        return tokens
+    
+    def get_error_reporter(self) -> ErrorReporter:
+        """Get the error reporter."""
+        return self.error_reporter 

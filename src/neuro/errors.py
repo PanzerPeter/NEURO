@@ -1,17 +1,15 @@
 """
-NEURO Error Handling System
-
-Comprehensive error types and error reporting for the NEURO compiler.
-Provides detailed error messages with source location information.
+Error Handling Slice
+Handles all error types and formatting for the NEURO compiler.
 """
 
 from typing import Optional, List, Any
 from dataclasses import dataclass
 
 
-@dataclass(frozen=True)
+@dataclass
 class SourceLocation:
-    """Represents a location in source code for error reporting."""
+    """Represents a location in source code."""
     filename: str
     line: int
     column: int
@@ -26,27 +24,16 @@ class NeuroError(Exception):
     def __init__(self, message: str, location: Optional[SourceLocation] = None):
         self.message = message
         self.location = location
-        super().__init__(self.format_error())
+        super().__init__(self._format_error())
     
-    def format_error(self) -> str:
-        """Format the error message with location information."""
+    def _format_error(self) -> str:
         if self.location:
-            return f"{self.location}: {self.message}"
-        return self.message
+            return f"{self.location}: error: {self.message}"
+        return f"error: {self.message}"
 
 
-class LexerError(NeuroError):
-    """Error during lexical analysis (tokenization)."""
-    
-    def __init__(self, message: str, location: SourceLocation, char: str = ""):
-        self.char = char
-        if char:
-            message = f"{message} (found '{char}')"
-        super().__init__(message, location)
-
-
-class ParseError(NeuroError):
-    """Error during parsing (AST construction)."""
+class NeuroSyntaxError(NeuroError):
+    """Syntax error in NEURO source code."""
     
     def __init__(self, message: str, location: Optional[SourceLocation] = None, 
                  expected: Optional[str] = None, found: Optional[str] = None):
@@ -54,17 +41,15 @@ class ParseError(NeuroError):
         self.found = found
         
         if expected and found:
-            message = f"{message}: expected {expected}, found {found}"
-        elif expected:
-            message = f"{message}: expected {expected}"
-        elif found:
-            message = f"{message}: unexpected {found}"
+            full_message = f"{message}. Expected {expected}, found {found}"
+        else:
+            full_message = message
             
-        super().__init__(message, location)
+        super().__init__(full_message, location)
 
 
-class TypeError(NeuroError):
-    """Error during type checking and inference."""
+class NeuroTypeError(NeuroError):
+    """Type error in NEURO source code."""
     
     def __init__(self, message: str, location: Optional[SourceLocation] = None,
                  expected_type: Optional[str] = None, actual_type: Optional[str] = None):
@@ -72,103 +57,54 @@ class TypeError(NeuroError):
         self.actual_type = actual_type
         
         if expected_type and actual_type:
-            message = f"{message}: expected type '{expected_type}', got '{actual_type}'"
-        elif expected_type:
-            message = f"{message}: expected type '{expected_type}'"
-        elif actual_type:
-            message = f"{message}: cannot use type '{actual_type}'"
+            full_message = f"{message}. Expected type '{expected_type}', found '{actual_type}'"
+        else:
+            full_message = message
             
-        super().__init__(message, location)
+        super().__init__(full_message, location)
 
 
-class NameError(NeuroError):
-    """Error with variable/function names and scoping."""
-    
-    def __init__(self, message: str, location: Optional[SourceLocation] = None,
-                 name: Optional[str] = None):
-        self.name = name
-        
-        if name:
-            message = f"{message}: '{name}'"
-            
-        super().__init__(message, location)
+class NeuroSemanticError(NeuroError):
+    """Semantic error in NEURO source code."""
+    pass
 
 
-class CompilerError(NeuroError):
-    """Error during code generation or optimization."""
-    
-    def __init__(self, message: str, location: Optional[SourceLocation] = None,
-                 phase: Optional[str] = None):
-        self.phase = phase
-        
-        if phase:
-            message = f"{phase}: {message}"
-            
-        super().__init__(message, location)
-
-
-class InternalError(NeuroError):
-    """Internal compiler error - should not happen in normal operation."""
-    
-    def __init__(self, message: str, location: Optional[SourceLocation] = None):
-        message = f"Internal compiler error: {message}"
-        super().__init__(message, location)
-
-
-def error_with_context(error: NeuroError, source_lines: List[str]) -> str:
-    """
-    Format an error with source code context for better debugging.
-    
-    Args:
-        error: The error to format
-        source_lines: Lines of source code for context
-        
-    Returns:
-        Formatted error message with source context
-    """
-    if not error.location or not source_lines:
-        return str(error)
-    
-    location = error.location
-    line_num = location.line
-    col_num = location.column
-    
-    # Build context window (3 lines before and after)
-    start_line = max(0, line_num - 4)
-    end_line = min(len(source_lines), line_num + 3)
-    
-    lines = []
-    lines.append(str(error))
-    lines.append("")
-    
-    for i in range(start_line, end_line):
-        line_marker = ">>>" if i == line_num - 1 else "   "
-        line_number = f"{i + 1:3d}"
-        line_content = source_lines[i].rstrip()
-        lines.append(f"{line_marker} {line_number} | {line_content}")
-        
-        # Add pointer to error column
-        if i == line_num - 1 and col_num > 0:
-            pointer = " " * (8 + col_num - 1) + "^"
-            lines.append(pointer)
-    
-    return "\n".join(lines)
+class NeuroRuntimeError(NeuroError):
+    """Runtime error during NEURO program execution."""
+    pass
 
 
 class ErrorReporter:
-    """Collects and reports multiple errors during compilation."""
+    """Collects and reports compilation errors."""
     
     def __init__(self):
         self.errors: List[NeuroError] = []
-        self.warnings: List[NeuroError] = []
+        self.warnings: List[str] = []
     
-    def error(self, error: NeuroError) -> None:
-        """Add an error to the collection."""
-        self.errors.append(error)
+    def error(self, message: str, location: Optional[SourceLocation] = None) -> None:
+        """Report a general error."""
+        self.errors.append(NeuroError(message, location))
     
-    def warning(self, warning: NeuroError) -> None:
-        """Add a warning to the collection."""
-        self.warnings.append(warning)
+    def syntax_error(self, message: str, location: Optional[SourceLocation] = None,
+                     expected: Optional[str] = None, found: Optional[str] = None) -> None:
+        """Report a syntax error."""
+        self.errors.append(NeuroSyntaxError(message, location, expected, found))
+    
+    def type_error(self, message: str, location: Optional[SourceLocation] = None,
+                   expected_type: Optional[str] = None, actual_type: Optional[str] = None) -> None:
+        """Report a type error."""
+        self.errors.append(NeuroTypeError(message, location, expected_type, actual_type))
+    
+    def semantic_error(self, message: str, location: Optional[SourceLocation] = None) -> None:
+        """Report a semantic error."""
+        self.errors.append(NeuroSemanticError(message, location))
+    
+    def warning(self, message: str, location: Optional[SourceLocation] = None) -> None:
+        """Report a warning."""
+        if location:
+            self.warnings.append(f"{location}: warning: {message}")
+        else:
+            self.warnings.append(f"warning: {message}")
     
     def has_errors(self) -> bool:
         """Check if any errors have been reported."""
@@ -178,41 +114,35 @@ class ErrorReporter:
         """Check if any warnings have been reported."""
         return len(self.warnings) > 0
     
-    def report(self, source_lines: Optional[List[str]] = None) -> str:
-        """
-        Generate a formatted report of all errors and warnings.
+    def get_error_count(self) -> int:
+        """Get the number of errors."""
+        return len(self.errors)
+    
+    def get_warning_count(self) -> int:
+        """Get the number of warnings."""
+        return len(self.warnings)
+    
+    def print_errors(self) -> None:
+        """Print all errors to stderr."""
+        for error in self.errors:
+            print(f"{error}", file=__import__('sys').stderr)
+    
+    def print_warnings(self) -> None:
+        """Print all warnings to stderr."""
+        for warning in self.warnings:
+            print(f"{warning}", file=__import__('sys').stderr)
+    
+    def print_summary(self) -> None:
+        """Print error and warning summary."""
+        if self.has_errors():
+            error_count = self.get_error_count()
+            error_text = "error" if error_count == 1 else "errors"
+            print(f"{error_count} {error_text} generated.", file=__import__('sys').stderr)
         
-        Args:
-            source_lines: Source code lines for context
-            
-        Returns:
-            Formatted error report
-        """
-        lines = []
-        
-        if self.errors:
-            lines.append(f"Found {len(self.errors)} error(s):")
-            lines.append("")
-            
-            for error in self.errors:
-                if source_lines:
-                    lines.append(error_with_context(error, source_lines))
-                else:
-                    lines.append(str(error))
-                lines.append("")
-        
-        if self.warnings:
-            lines.append(f"Found {len(self.warnings)} warning(s):")
-            lines.append("")
-            
-            for warning in self.warnings:
-                if source_lines:
-                    lines.append(error_with_context(warning, source_lines))
-                else:
-                    lines.append(str(warning))
-                lines.append("")
-        
-        return "\n".join(lines)
+        if self.has_warnings():
+            warning_count = self.get_warning_count()
+            warning_text = "warning" if warning_count == 1 else "warnings"
+            print(f"{warning_count} {warning_text} generated.", file=__import__('sys').stderr)
     
     def clear(self) -> None:
         """Clear all errors and warnings."""
